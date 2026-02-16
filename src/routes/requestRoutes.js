@@ -1,0 +1,98 @@
+/**
+ * Rutas de requests (pedidos)
+ */
+
+import express from 'express';
+import { body } from 'express-validator';
+import {
+  createRequestHandler,
+  getRequestsHandler,
+  getRequestByIdHandler,
+  updateRequestStatusHandler,
+} from '../controllers/requestController.js';
+import { authenticateToken } from '../middleware/auth.js';
+
+const router = express.Router();
+
+/**
+ * POST /api/requests
+ * Crear un nuevo request (pedido) - PÚBLICO (no requiere autenticación)
+ * Body: { storeId, customerName?, customerPhone?, customerEmail?, items, customMessage?, total, currency?, status? }
+ */
+const createRequestValidation = [
+  body('storeId')
+    .notEmpty()
+    .withMessage('storeId es requerido')
+    .isUUID()
+    .withMessage('storeId debe ser un UUID válido'),
+  body('items')
+    .isArray({ min: 1 })
+    .withMessage('El pedido debe contener al menos un producto'),
+  body('total')
+    .notEmpty()
+    .withMessage('El total es requerido')
+    .isFloat({ min: 0 })
+    .withMessage('El total debe ser un número válido mayor o igual a 0'),
+  body('currency')
+    .optional()
+    .isIn(['USD', 'EUR', 'VES'])
+    .withMessage('La moneda debe ser USD, EUR o VES'),
+  body('status')
+    .optional()
+    .isIn(['pending', 'processing', 'completed', 'cancelled'])
+    .withMessage('El estado debe ser pending, processing, completed o cancelled'),
+  body('customerName')
+    .optional()
+    .trim()
+    .isLength({ max: 255 })
+    .withMessage('El nombre del cliente no puede exceder 255 caracteres'),
+  body('customerPhone')
+    .optional()
+    .trim()
+    .isLength({ max: 20 })
+    .withMessage('El teléfono no puede exceder 20 caracteres'),
+  body('customerEmail')
+    .optional()
+    .trim()
+    .isEmail()
+    .withMessage('El email debe tener un formato válido'),
+];
+router.post('/', createRequestValidation, createRequestHandler);
+
+// Todas las demás rutas requieren autenticación
+router.use(authenticateToken);
+
+/**
+ * GET /api/requests
+ * Obtener todos los requests de una tienda
+ * Query params: storeId (requerido), status? (opcional), limit?, offset?
+ */
+router.get('/', getRequestsHandler);
+
+/**
+ * GET /api/requests/:id
+ * Obtener un request específico
+ * Query params: storeId (requerido)
+ */
+router.get('/:id', getRequestByIdHandler);
+
+/**
+ * PUT /api/requests/:id/status
+ * Actualizar el estado de un request
+ * Body: { storeId, status }
+ */
+const updateStatusValidation = [
+  body('storeId')
+    .notEmpty()
+    .withMessage('storeId es requerido')
+    .isUUID()
+    .withMessage('storeId debe ser un UUID válido'),
+  body('status')
+    .notEmpty()
+    .withMessage('status es requerido')
+    .isIn(['pending', 'processing', 'completed', 'cancelled'])
+    .withMessage('El estado debe ser pending, processing, completed o cancelled'),
+];
+router.put('/:id/status', updateStatusValidation, updateRequestStatusHandler);
+
+export default router;

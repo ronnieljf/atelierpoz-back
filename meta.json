@@ -1,0 +1,8 @@
+{
+    "data": [
+        {
+            "business_public_key": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxZUGMgdOijrua8t+grq6\nTb7s9YIBYtR3yX+5vso9qXm3in2tWIPUmQM2hfXWyM7P1X4krwGhZ6kXw6ERpD7W\n09oQOIwZnbXYlQHyemGp31u0WNAD+JY6KcnWaMzkKAgD5e+7ioEu9yb5HcE8Bx83\nBuxl3PtmqWII49XwffDavOT1sfIUy2k7vwP0M4Gx8Tw5H4++vXdKBExmoA5EafVj\nvv9gJcGZkOGRQ1LVbqHomN8055ZqyQZtK62zp7D0h0MFJV4yNcl+voawD192G27a\nRqxOn/T4YY0YI4a6Sfq+dirR5NPLy4jaFdYyA84aOZ3jhuuflhB5j0bN/pRkxAEe\nhQIDAQAB\n-----END PUBLIC KEY-----",
+            "business_public_key_signature_status": "VALID"
+        }
+    ]
+}
