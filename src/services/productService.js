@@ -1253,18 +1253,20 @@ export async function searchProductsForPOS(storeId, search, limit = 30) {
     const unitPriceWithIva = basePrice * (1 + iva / 100);
 
     if (combinations.length === 0) {
-      out.push({
-        productId: row.id,
-        combinationId: null,
-        productName: row.name,
-        sku: row.sku || null,
-        unitPrice: basePrice,
-        unitPriceWithIva,
-        iva,
-        stock: baseStock,
-        displayName: row.name,
-        currency: row.currency || 'USD',
-      });
+      if (baseStock > 0) {
+        out.push({
+          productId: row.id,
+          combinationId: null,
+          productName: row.name,
+          sku: row.sku || null,
+          unitPrice: basePrice,
+          unitPriceWithIva,
+          iva,
+          stock: baseStock,
+          displayName: row.name,
+          currency: row.currency || 'USD',
+        });
+      }
     } else {
       let attributes = row.attributes;
       if (typeof attributes === 'string') {
@@ -1310,21 +1312,23 @@ export async function searchProductsForPOS(storeId, search, limit = 30) {
             }
           }
         }
-        out.push({
-          productId: row.id,
-          combinationId: comboId,
-          productName: row.name,
-          sku: comboSku || row.sku || null,
-          unitPrice,
-          unitPriceWithIva,
-          iva,
-          stock,
-          displayName,
-          currency: row.currency || 'USD',
-          selections,
-          selectedVariants,
-          priceModifier: priceMod,
-        });
+        if (stock > 0) {
+          out.push({
+            productId: row.id,
+            combinationId: comboId,
+            productName: row.name,
+            sku: comboSku || row.sku || null,
+            unitPrice,
+            unitPriceWithIva,
+            iva,
+            stock,
+            displayName,
+            currency: row.currency || 'USD',
+            selections,
+            selectedVariants,
+            priceModifier: priceMod,
+          });
+        }
       }
     }
   }

@@ -11,6 +11,8 @@ import { updateRequestStatus, getRequestById, decreaseStockForRequest, increaseS
  */
 function formatReceivable(row) {
   if (!row) return null;
+  const itemsCount =
+    row.items_count != null && !Number.isNaN(parseInt(row.items_count, 10)) ? parseInt(row.items_count, 10) : null;
   return {
     id: row.id,
     storeId: row.store_id,
@@ -30,6 +32,8 @@ function formatReceivable(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     storeName: row.store_name,
+    itemsCount,
+    orderNumber: row.order_number != null ? parseInt(row.order_number, 10) : null,
   };
 }
 
@@ -291,7 +295,9 @@ export async function getReceivablesByStore(storeId, options = {}) {
     SELECT r.id, r.store_id, r.receivable_number, r.created_by, r.updated_by, r.customer_name, r.customer_phone, r.description,
       r.amount, r.currency, r.status, r.request_id, r.paid_at, r.created_at, r.updated_at,
       s.name as store_name,
-      u_created.name as created_by_name, u_updated.name as updated_by_name
+      u_created.name as created_by_name, u_updated.name as updated_by_name,
+      (SELECT COALESCE(jsonb_array_length(req.items), 0)::int FROM requests req WHERE req.id = r.request_id) AS items_count,
+      (SELECT req.order_number FROM requests req WHERE req.id = r.request_id) AS order_number
     FROM receivables r
     LEFT JOIN stores s ON s.id = r.store_id
     LEFT JOIN users u_created ON u_created.id = r.created_by

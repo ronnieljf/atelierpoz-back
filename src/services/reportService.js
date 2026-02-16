@@ -34,6 +34,8 @@ function parseDateRange(dateFrom, dateTo) {
  */
 export async function getSalesReport(storeId, options = {}) {
   const { dateFrom, dateTo } = parseDateRange(options.dateFrom, options.dateTo);
+  const dateFromDay = (options.dateFrom || dateFrom.slice(0, 10)).toString().slice(0, 10);
+  const dateToDay = (options.dateTo || dateTo.slice(0, 10)).toString().slice(0, 10);
   const groupByCategory = options.groupByCategory === true;
   const limit = Math.min(Math.max(0, parseInt(options.limit, 10) || 100), 500);
 
@@ -93,14 +95,61 @@ export async function getSalesReport(storeId, options = {}) {
   );
   const ordersCount = ordersCountResult.rows[0]?.cnt ?? 0;
 
-  // Cuentas por cobrar manuales (sin pedido) cobradas en el periodo
+  // 1) Ingresos por ventas (tabla sales, status completed) en el periodo
+  const totalRevenueFromSalesResult = await query(
+    `SELECT COALESCE(SUM(total), 0)::numeric(12,2) AS total
+     FROM sales
+     WHERE store_id = $1 AND status = 'completed'
+       AND created_at >= $2::date
+       AND created_at < ($3::date + interval '1 day')`,
+    [storeId, dateFromDay, dateToDay]
+  );
+  const totalRevenueFromSales = parseFloat(totalRevenueFromSalesResult.rows[0]?.total ?? 0) || 0;
+
+  // Mismo criterio que getReceivablesByStore: status='paid' y rango por created_at (dateTo inclusivo)
+  const receivablesPaidCountResult = await query(
+    `SELECT COUNT(*)::int AS cnt FROM receivables
+     WHERE store_id = $1 AND status = 'paid'
+       AND created_at >= $2::date
+       AND created_at < ($3::date + interval '1 day')`,
+    [storeId, dateFromDay, dateToDay]
+  );
+  const receivablesPaidCount = receivablesPaidCountResult.rows[0]?.cnt ?? 0;
+
+  // 2) Ingresos por cuentas por cobrar (status paid) en el periodo (por paid_at = cuando se cobró)
+  const totalRevenueFromReceivablesPaidResult = await query(
+    `SELECT COALESCE(SUM(amount), 0)::numeric(12,2) AS total
+     FROM receivables
+     WHERE store_id = $1 AND status = 'paid'
+       AND paid_at IS NOT NULL
+       AND (paid_at::date) >= $2::date AND (paid_at::date) <= $3::date`,
+    [storeId, dateFromDay, dateToDay]
+  );
+  const totalRevenueFromReceivablesPaid = parseFloat(totalRevenueFromReceivablesPaidResult.rows[0]?.total ?? 0) || 0;
+
+  // 3) Ingresos por pedidos completados en el periodo que NO tienen cuenta por cobrar ya sumada (evitar doble conteo)
+  const totalRevenueFromOrdersExcludingLinkedResult = await query(
+    `SELECT COALESCE(SUM(r.total), 0)::numeric(12,2) AS total
+     FROM requests r
+     WHERE r.store_id = $1 AND r.status = 'completed'
+       AND r.updated_at >= $2 AND r.updated_at <= $3
+       AND NOT EXISTS (
+         SELECT 1 FROM receivables rec
+         WHERE rec.request_id = r.id AND rec.status = 'paid'
+       )`,
+    [storeId, dateFrom, dateTo]
+  );
+  const totalRevenueFromOrdersExcludingLinked = parseFloat(totalRevenueFromOrdersExcludingLinkedResult.rows[0]?.total ?? 0) || 0;
+
+  // Cuentas manuales cobradas en el periodo (mismo criterio: created_at en rango)
   const manualReceivablesResult = await query(
     `SELECT id, receivable_number, customer_name, customer_phone, amount, currency, paid_at
      FROM receivables
      WHERE store_id = $1 AND request_id IS NULL AND status = 'paid'
-       AND paid_at >= $2 AND paid_at <= $3
+       AND created_at >= $2::date
+       AND created_at < ($3::date + interval '1 day')
      ORDER BY paid_at DESC`,
-    [storeId, dateFrom, dateTo]
+    [storeId, dateFromDay, dateToDay]
   );
   const manualReceivablesPaid = manualReceivablesResult.rows.map((r) => ({
     receivableId: r.id,
@@ -139,12 +188,16 @@ export async function getSalesReport(storeId, options = {}) {
     period: { dateFrom, dateTo },
     summary: {
       totalUnitsSold: totalUnits,
+      totalRevenueFromSales,
+      totalRevenueFromReceivablesPaid,
       totalRevenueFromOrders,
+      totalRevenueFromOrdersExcludingLinked,
       totalRevenueFromManualReceivables,
       totalRevenueFromManualReceivablesByCurrency,
-      totalRevenue: totalRevenueFromOrders + totalRevenueFromManualReceivables,
+      totalRevenue: totalRevenueFromSales + totalRevenueFromReceivablesPaid + totalRevenueFromOrdersExcludingLinked,
       ordersCount,
       productsWithSales: byProduct.length,
+      receivablesPaidCount,
       manualReceivablesPaidCount: manualReceivablesPaid.length,
     },
     byProduct,
@@ -258,11 +311,15 @@ export async function getFullReport(storeId, options = {}) {
   const executive = {
     period: sales.period,
     totalUnitsSold: sales.summary.totalUnitsSold,
-    totalRevenueFromOrders: sales.summary.totalRevenueFromOrders,
+    totalRevenueFromSales: sales.summary.totalRevenueFromSales ?? 0,
+    totalRevenueFromReceivablesPaid: sales.summary.totalRevenueFromReceivablesPaid ?? 0,
+    totalRevenueFromOrders: sales.summary.totalRevenueFromOrders ?? 0,
+    totalRevenueFromOrdersExcludingLinked: sales.summary.totalRevenueFromOrdersExcludingLinked ?? 0,
     totalRevenueFromManualReceivables: sales.summary.totalRevenueFromManualReceivables ?? 0,
     totalRevenueFromManualReceivablesByCurrency: sales.summary.totalRevenueFromManualReceivablesByCurrency ?? {},
     totalRevenue: sales.summary.totalRevenue,
     ordersCompleted: sales.summary.ordersCount,
+    receivablesPaidCount: sales.summary.receivablesPaidCount ?? sales.summary.manualReceivablesPaidCount ?? 0,
     manualReceivablesPaidCount: sales.summary.manualReceivablesPaidCount ?? 0,
     productsWithSales: sales.summary.productsWithSales,
     productsWithNoSales: unsold.summary.productsNotSold,
@@ -298,6 +355,8 @@ export async function getFullReport(storeId, options = {}) {
  */
 export async function getRevenueOverTime(storeId, options = {}) {
   const { dateFrom, dateTo } = parseDateRange(options.dateFrom, options.dateTo);
+  const dateFromDay = (options.dateFrom || dateFrom.slice(0, 10)).toString().slice(0, 10);
+  const dateToDay = (options.dateTo || dateTo.slice(0, 10)).toString().slice(0, 10);
   const groupBy = options.groupBy === 'week' ? 'week' : options.groupBy === 'month' ? 'month' : 'day';
 
   const dateTrunc = groupBy === 'month' ? 'month' : groupBy === 'week' ? 'week' : 'day';
@@ -322,11 +381,12 @@ export async function getRevenueOverTime(storeId, options = {}) {
          SUM(rec.amount)::numeric(12,2) AS revenue,
          rec.currency
        FROM receivables rec
-       WHERE rec.store_id = $1 AND rec.request_id IS NULL AND rec.status = 'paid'
-         AND rec.paid_at >= $2 AND rec.paid_at <= $3
+       WHERE rec.store_id = $1 AND rec.status = 'paid'
+         AND rec.paid_at IS NOT NULL
+         AND (rec.paid_at::date) >= $2::date AND (rec.paid_at::date) <= $3::date
        GROUP BY date_trunc($4, rec.paid_at), rec.currency
        ORDER BY bucket_date ASC`,
-      [storeId, dateFrom, dateTo, dateTrunc]
+      [storeId, dateFromDay, dateToDay, dateTrunc]
     ),
   ]);
 
