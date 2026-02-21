@@ -20,6 +20,10 @@ import saleRoutes from './routes/saleRoutes.js';
 import clientRoutes from './routes/clientRoutes.js';
 import bcvRoutes from './routes/bcvRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
+import expenseRoutes from './routes/expenseRoutes.js';
+import financeCategoryRoutes from './routes/financeCategoryRoutes.js';
+import vendorRoutes from './routes/vendorRoutes.js';
+import purchaseRoutes from './routes/purchaseRoutes.js';
 import webhookRoutes from './routes/webhookRoutes.js';
 import { flowPost } from './controllers/flowController.js';
 
@@ -62,6 +66,10 @@ app.use('/api/sales', saleRoutes);
 app.use('/api/clients', clientRoutes);
 app.use('/api/bcv', bcvRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/expenses', expenseRoutes);
+app.use('/api/finance-categories', financeCategoryRoutes);
+app.use('/api/vendors', vendorRoutes);
+app.use('/api/purchases', purchaseRoutes);
 app.use('/api/webhooks', webhookRoutes);
 
 /** POST /api/flow — WhatsApp Flow data exchange (payload cifrado; respuesta cifrada). */

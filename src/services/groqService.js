@@ -5,14 +5,15 @@
 
 import Groq from 'groq-sdk';
 import { getStoresWithUserIdByPhoneNumber } from './storeService.js';
-import { getRequestsByStore, updateRequestStatus, getRequestByStoreAndOrderNumber } from './requestService.js';
+import { getRequestsByStore, updateRequestStatus, getRequestByStoreAndOrderNumber, getRequestById } from './requestService.js';
 import { 
   getReceivablesByStoreWithPayments, 
   createReceivableFromRequest,
   createReceivable,
   createReceivablePayment,
   updateReceivable,
-  getReceivableByStoreAndReceivableNumber 
+  getReceivableByStoreAndReceivableNumber,
+  getPaymentsByReceivableId,
 } from './receivableService.js';
 import { getProductsByStore } from './productService.js';
 import { getClientsByStore, createClient } from './clientService.js';
@@ -376,6 +377,44 @@ const tools = [
   },
 ];
 
+/** Herramientas permitidas solo para dueños de tienda: únicamente consultas de cuentas por cobrar */
+const toolsReceivablesOnly = [
+  {
+    type: 'function',
+    function: {
+      name: 'consultar_cuentas_por_cobrar',
+      description: 'Lista las cuentas por cobrar de la tienda. Usar cuando pidan ver cuentas, quién les debe, cuánto les deben, listado de cuentas pendientes.',
+      parameters: {
+        type: 'object',
+        properties: {
+          storeId: { type: 'string', description: 'ID de la tienda' },
+          status: {
+            type: 'string',
+            description: 'Estado opcional: pending, paid, cancelled',
+            enum: ['pending', 'paid', 'cancelled'],
+          },
+        },
+        required: ['storeId'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'consultar_detalle_cuenta',
+      description: 'Muestra el detalle de una cuenta por cobrar por su número: cliente, monto, abonos, pendiente y si viene de un pedido los productos con precios.',
+      parameters: {
+        type: 'object',
+        properties: {
+          storeId: { type: 'string', description: 'ID de la tienda' },
+          receivableNumber: { type: 'number', description: 'Número de la cuenta por cobrar (ej: 3 para cuenta #3)' },
+        },
+        required: ['storeId', 'receivableNumber'],
+      },
+    },
+  },
+];
+
 /**
  * Ejecuta una función llamada por Groq
  */
@@ -415,11 +454,19 @@ async function executeFunction(functionName, args, userStores) {
         
         const all = await getReceivablesByStoreWithPayments(storeId);
         const filtered = status ? all.filter(r => r.status === status) : all.filter(r => r.status === 'pending');
+        const totalPendientePorMoneda = {};
+        for (const r of filtered) {
+          const pendiente = Math.max(0, (r.amount || 0) - (r.totalPaid || 0));
+          if (pendiente <= 0) continue;
+          const moneda = r.currency || 'USD';
+          totalPendientePorMoneda[moneda] = (totalPendientePorMoneda[moneda] || 0) + pendiente;
+        }
         
         return {
           success: true,
           storeName: store.storeName,
           total: filtered.length,
+          totalPendientePorMoneda,
           cuentas: filtered.map(r => ({
             numero: r.receivableNumber,
             cliente: r.customerName || 'Sin nombre',
@@ -432,6 +479,58 @@ async function executeFunction(functionName, args, userStores) {
             desdePedido: !!r.requestId,
             fecha: new Date(r.createdAt).toLocaleDateString('es-ES'),
           })),
+        };
+      }
+
+      case 'consultar_detalle_cuenta': {
+        const { storeId, receivableNumber } = args;
+        const store = userStores.find(s => s.storeId === storeId);
+        if (!store) throw new Error('Tienda no encontrada');
+        const rec = await getReceivableByStoreAndReceivableNumber(storeId, receivableNumber);
+        if (!rec) throw new Error(`Cuenta #${receivableNumber} no encontrada`);
+        const paymentsData = await getPaymentsByReceivableId(rec.id, storeId);
+        const totalPaid = paymentsData?.totalPaid ?? 0;
+        const pendiente = Math.max(0, (rec.amount || 0) - totalPaid);
+        let pedido = null;
+        if (rec.requestId) {
+          const request = await getRequestById(rec.requestId, storeId);
+          if (request && request.items && Array.isArray(request.items)) {
+            pedido = {
+              numeroPedido: request.order_number,
+              cliente: request.customer_name,
+              telefono: request.customer_phone,
+              total: parseFloat(request.total),
+              moneda: request.currency || 'USD',
+              productos: request.items.map((it, i) => ({
+                nombre: it.productName,
+                cantidad: it.quantity,
+                precioUnitario: it.quantity > 0 ? (it.totalPrice || 0) / it.quantity : 0,
+                total: it.totalPrice || 0,
+              })),
+            };
+          }
+        }
+        return {
+          success: true,
+          storeName: store.storeName,
+          cuenta: {
+            numero: rec.receivableNumber,
+            cliente: rec.customerName || 'Sin nombre',
+            telefono: rec.customerPhone,
+            descripcion: rec.description,
+            monto: rec.amount,
+            moneda: rec.currency || 'USD',
+            estado: rec.status,
+            totalPagado: totalPaid,
+            pendiente,
+            abonos: (paymentsData?.payments || []).map(p => ({
+              monto: p.amount,
+              moneda: p.currency,
+              notas: p.notes,
+              fecha: p.createdAt ? new Date(p.createdAt).toLocaleDateString('es-ES') : null,
+            })),
+            pedido,
+          },
         };
       }
       
@@ -1002,6 +1101,156 @@ ${process.env.DOMAIN || 'https://atelierpoz.com'}/admin
       webButtonUrl: null,
       error: error.message,
     };
+  }
+}
+
+/**
+ * Procesa mensajes de dueños de tienda: SOLO consultas de cuentas por cobrar.
+ * No permite crear, modificar, registrar abonos ni consultar pedidos/productos.
+ */
+export async function processStoreOwnerReceivablesOnly(phone, messageText) {
+  try {
+    const userStores = await getStoresWithUserIdByPhoneNumber(phone);
+    if (userStores.length === 0) {
+      return {
+        response: '👋 No encontré tiendas asociadas a este número. Asocia tu número desde el panel web.',
+        webButtonUrl: process.env.DOMAIN ? `${process.env.DOMAIN}/admin` : 'https://atelierpoz.com/admin',
+      };
+    }
+    const storesContext = userStores.map(s => `- ${s.storeName} (ID: ${s.storeId})`).join('\n');
+    const history = getConversationHistory(phone);
+    const systemMessage = {
+      role: 'system',
+      content: `Eres un asistente de WhatsApp para Atelier Poz. El usuario administra estas tiendas:
+${storesContext}
+
+REGLA ESTRICTA: Solo puedes ayudar con CONSULTAS de cuentas por cobrar. Nada más.
+
+FUNCIONES PERMITIDAS:
+1. consultar_cuentas_por_cobrar - Listar cuentas por cobrar (quién me debe, cuánto me deben, cuentas pendientes).
+2. consultar_detalle_cuenta - Ver detalle de una cuenta por su número (cliente, monto, abonos, pendiente, y si viene de un pedido: productos y precios).
+
+Si el usuario pide ver cuentas, listar cuentas, quién le debe, cuánto le deben, detalle de la cuenta X, etc., USA estas funciones y responde con los datos.
+
+IMPORTANTE - TOTAL: Cuando el usuario pregunte por "el total", "cuánto en total", "dime el total", etc., DEBES usar el campo totalPendientePorMoneda que devuelve la función consultar_cuentas_por_cobrar. Ese es el total oficial (igual al admin y reportes). NO sumes tú mismo los pendiente de cada cuenta; usa siempre totalPendientePorMoneda. Ejemplo: si totalPendientePorMoneda es { USD: 292 }, responde "El total de tus cuentas por cobrar es 292 USD".
+
+Si el usuario pide algo que NO sea consulta de cuentas por cobrar (por ejemplo: registrar un abono, crear cuenta, ver pedidos, productos, clientes, cambiar estado, cancelar), responde amablemente:
+"Solo puedo ayudarte con consultas de tus cuentas por cobrar aquí. Para registrar abonos, crear cuentas, ver pedidos o gestionar tu tienda, usa el panel web 👇"
+y no ejecutes ninguna otra acción.
+
+Sé breve y claro. Usa listas y números. Siempre que des datos de cuentas, presenta totales y detalles de forma ordenada.`,
+    };
+    const messages = [
+      systemMessage,
+      ...history,
+      { role: 'user', content: messageText },
+    ];
+    addToHistory(phone, 'user', messageText);
+
+    let response = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages,
+      tools: toolsReceivablesOnly,
+      tool_choice: 'auto',
+      temperature: 0.5,
+      max_tokens: 1024,
+    });
+
+    let iterations = 0;
+    const maxIterations = 5;
+    let functionResults = [];
+
+    while (response.choices[0].message.tool_calls && iterations < maxIterations) {
+      iterations++;
+      const toolCalls = response.choices[0].message.tool_calls;
+      addToHistory(phone, 'assistant', response.choices[0].message.content || '');
+      const toolResults = [];
+      for (const toolCall of toolCalls) {
+        const functionName = toolCall.function.name;
+        const args = JSON.parse(toolCall.function.arguments);
+        const result = await executeFunction(functionName, args, userStores);
+        functionResults.push({ name: functionName, result });
+        toolResults.push({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(result),
+        });
+      }
+      messages.push(response.choices[0].message);
+      messages.push(...toolResults);
+      response = await groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
+        messages,
+        tools: toolsReceivablesOnly,
+        tool_choice: 'auto',
+        temperature: 0.5,
+        max_tokens: 1024,
+      });
+    }
+
+    const finalResponse = response.choices[0].message.content || 'No pude procesar tu consulta.';
+    addToHistory(phone, 'assistant', finalResponse);
+    const webUrl = process.env.DOMAIN || 'https://atelierpoz.com';
+    return {
+      response: finalResponse,
+      webButtonUrl: `${webUrl}/admin`,
+      functionResults,
+    };
+  } catch (error) {
+    console.error('[Groq] Error processStoreOwnerReceivablesOnly:', error);
+    if (error.status === 429 || error.code === 'rate_limit_exceeded' || error.message?.includes('Rate limit')) {
+      const userStoresForFallback = await getStoresWithUserIdByPhoneNumber(phone);
+      const receivablesFallback = await generateReceivablesOnlySummary(userStoresForFallback);
+      const response = receivablesFallback && receivablesFallback.trim()
+        ? `${receivablesFallback}\n\n😅 Límite de mensajes por hoy alcanzado. Para más consultas usa el panel web 👇`
+        : '😅 Límite de uso alcanzado. Por favor intenta en 24 horas o usa el panel web 👇';
+      return {
+        response,
+        webButtonUrl: `${process.env.DOMAIN || 'https://atelierpoz.com'}/admin`,
+        error: 'rate_limit_exceeded',
+      };
+    }
+    return {
+      response: '❌ Error procesando tu mensaje. Por favor intenta de nuevo o usa el panel web 👇',
+      webButtonUrl: process.env.DOMAIN ? `${process.env.DOMAIN}/admin` : 'https://atelierpoz.com/admin',
+      error: error.message,
+    };
+  }
+}
+
+/**
+ * Genera solo resumen de cuentas por cobrar (para dueños de tienda cuando se acaban los tokens).
+ */
+async function generateReceivablesOnlySummary(userStores) {
+  try {
+    if (!userStores || userStores.length === 0) return '';
+    const parts = [];
+    for (const store of userStores) {
+      const { storeId, storeName } = store;
+      const all = await getReceivablesByStoreWithPayments(storeId);
+      const pendientes = all.filter(r => r.status === 'pending');
+      if (pendientes.length === 0) {
+        parts.push(`💼 *${storeName}*\nNo tienes cuentas por cobrar pendientes.`);
+        continue;
+      }
+      const cuentasList = pendientes.slice(0, 10).map(r => {
+        const numero = r.receivableNumber || 'N/A';
+        const cliente = r.customerName || 'Sin nombre';
+        const pendiente = (parseFloat(r.amount || 0) - parseFloat(r.totalPaid || 0)).toFixed(2);
+        const moneda = r.currency || 'USD';
+        return `• Cuenta #${numero}: ${cliente} — Pendiente ${moneda} ${pendiente}`;
+      }).join('\n');
+      const totalPendiente = pendientes.reduce((sum, r) => sum + (parseFloat(r.amount || 0) - parseFloat(r.totalPaid || 0)), 0);
+      const moneda = pendientes[0]?.currency || 'USD';
+      let text = `💼 *CUENTAS POR COBRAR - ${storeName}*\n(${pendientes.length} cuenta(s) pendiente(s))\n\n${cuentasList}`;
+      if (pendientes.length > 10) text += `\n...y ${pendientes.length - 10} más`;
+      text += `\n\n📊 *Total a cobrar: ${moneda} ${totalPendiente.toFixed(2)}*`;
+      parts.push(text);
+    }
+    return parts.join('\n\n');
+  } catch (err) {
+    console.error('[Groq] Error generateReceivablesOnlySummary:', err);
+    return '';
   }
 }
 

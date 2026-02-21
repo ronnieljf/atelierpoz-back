@@ -3,11 +3,10 @@
  * Este es el nuevo webhook que reemplaza al básico con comandos.
  */
 
-import { processMessageWithGroq } from '../services/groqService.js';
+import { processStoreOwnerReceivablesOnly } from '../services/groqService.js';
 import { getStoresWithUserIdByPhoneNumber, getStoreNameAndPhone } from '../services/storeService.js';
 import { generateToken, getUserById } from '../services/authService.js';
 import { getPendingReceivablesByCustomerPhone } from '../services/receivableService.js';
-import { findStoresByClientPhone } from '../services/clientService.js';
 
 const GRAPH_API_VERSION = 'v22.0';
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
@@ -78,14 +77,13 @@ export async function geminiWebhookPost(req, res) {
         console.log(`[groq-webhook] Mensaje de ${from}: ${messageText}`);
 
         try {
-          // Obtener información del usuario: solo procesar si el teléfono está asociado a una tienda
+          // ¿El número es de un dueño de tienda?
           const storesWithUser = await getStoresWithUserIdByPhoneNumber(String(from));
           if (storesWithUser.length === 0) {
+            // No es tienda: enviar solo las deudas que tenga con tiendas (si tiene)
             const fromStr = String(from);
-            let messageToSend = null;
-
-            // 1) ¿Tiene cuentas pendientes con algún store?
             const pendingByStore = await getPendingReceivablesByCustomerPhone(fromStr);
+            let messageToSend;
             if (pendingByStore.length > 0) {
               const parts = [];
               const amountParts = [];
@@ -99,116 +97,51 @@ export async function geminiWebhookPost(req, res) {
                 amountParts.push(`${amounts} con ${name}`);
               }
               messageToSend =
-                'Hola 👋 No podemos atender mensajes en este número. Tienes cuenta(s) pendiente(s) con: ' +
+                'Hola 👋 Tienes cuenta(s) pendiente(s) con: ' +
                 parts.join('; ') +
                 '. Monto pendiente: ' +
                 amountParts.join('; ') +
-                '. Por favor escribe directamente a la tienda o tiendas para coordinar.';
+                '. Por favor escribe directamente a la tienda o tiendas para coordinar el pago.';
             } else {
-              // 2) ¿Es cliente de alguna tienda?
-              const storesAsClient = await findStoresByClientPhone(fromStr);
-              if (storesAsClient.length > 0) {
-                const parts = [];
-                for (const s of storesAsClient) {
-                  const { name, phoneNumber } = await getStoreNameAndPhone(s.storeId);
-                  parts.push(phoneNumber ? `${name} (${phoneNumber})` : name);
-                }
-                messageToSend =
-                  'Hola 👋 No podemos atender mensajes en este número. Puedes escribir directamente a la(s) tienda(s): ' +
-                  parts.join('; ') +
-                  '.';
-              }
-            }
-
-            if (!messageToSend) {
               messageToSend =
-                'Hola 👋 Gracias por escribir. No podemos atender mensajes en este número porque no está asociado a una tienda autorizada. Si eres cliente, por favor responde al número de la tienda donde realizaste tu pedido. Si necesitas ayuda para dar de alta tu tienda, contáctanos por otro medio.';
+                'Hola 👋 No tienes deudas pendientes con ninguna tienda. Si tienes dudas, contacta al número de la tienda donde realizaste tu compra.';
             }
             await sendWhatsAppText(phoneNumberId, from, messageToSend, token);
-            console.log(`[groq-webhook] Remitente ${from} no asociado a tienda, respuesta enviada.`);
+            console.log(`[groq-webhook] Remitente ${from} no es tienda, respuesta enviada.`);
             continue;
           }
 
-          let loginToken = null;
-          if (storesWithUser.length > 0) {
-            const firstStore = storesWithUser[0];
-            const user = await getUserById(firstStore.userId);
-            if (user) {
-              loginToken = generateToken({
-                id: user.id,
-                email: user.email,
-                role: user.role,
-              });
-            }
+          // Es dueño de tienda: solo consultas de cuentas por cobrar (Groq restringido)
+          const result = await processStoreOwnerReceivablesOnly(from, messageText);
+          let responseText = result.response || 'No pude procesar tu consulta.';
+          if (responseText.length > MAX_MESSAGE_LENGTH) {
+            responseText = responseText.slice(0, MAX_MESSAGE_LENGTH - '\n\n...(ver más en la web)'.length) + '\n\n...(ver más en la web)';
           }
-
-          // Procesar con Groq
-          const result = await processMessageWithGroq(from, messageText);
-          
-          let responseText = result.response || 'Lo siento, no pude procesar tu mensaje.';
-          
-          // Verificar si es un error de rate limit
-          const isRateLimitError = result.error === 'rate_limit_exceeded';
-          
-          // Truncar si es muy largo (excepto para rate limit que ya está bien formateado)
-          if (!isRateLimitError && responseText.length > MAX_MESSAGE_LENGTH) {
-            const truncateSuffix = '\n\n...(mensaje recortado)';
-            responseText = responseText.slice(0, MAX_MESSAGE_LENGTH - truncateSuffix.length) + truncateSuffix;
-          }
-
-          // Enviar respuesta principal
           await sendWhatsAppText(phoneNumberId, from, responseText, token);
 
-          // Si hay rate limit y hay resúmenes, enviarlos como mensajes separados
-          if (isRateLimitError && result.summaries && Array.isArray(result.summaries)) {
-            console.log(`[groq-webhook] Enviando ${result.summaries.length} resúmenes adicionales...`);
-            
-            // Esperar un poco antes de enviar los resúmenes
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            for (const summary of result.summaries) {
-              if (summary && summary.trim()) {
-                try {
-                  // Truncar si es muy largo
-                  let summaryText = summary;
-                  if (summaryText.length > MAX_MESSAGE_LENGTH) {
-                    const truncateSuffix = '\n\n...(mensaje recortado, ver más en el panel web)';
-                    summaryText = summaryText.slice(0, MAX_MESSAGE_LENGTH - truncateSuffix.length) + truncateSuffix;
-                  }
-                  
-                  await sendWhatsAppText(phoneNumberId, from, summaryText, token);
-                  // Pequeña pausa entre mensajes
-                  await new Promise(resolve => setTimeout(resolve, 500));
-                } catch (summaryErr) {
-                  console.error('[groq-webhook] Error enviando resumen:', summaryErr);
-                }
-              }
-            }
+          // Siempre enviar botón para ver el admin en la web
+          const webUrl = process.env.DOMAIN || 'https://atelierpoz.com';
+          let adminUrl = `${webUrl}/admin`;
+          const firstStore = storesWithUser[0];
+          const user = await getUserById(firstStore.userId);
+          if (user) {
+            const loginToken = generateToken({
+              id: user.id,
+              email: user.email,
+              role: user.role,
+            });
+            adminUrl = `${webUrl}/admin?token=${encodeURIComponent(loginToken)}`;
           }
+          await sendWhatsAppCtaUrl(
+            phoneNumberId,
+            from,
+            'Gestiona tu tienda desde el panel web 👇',
+            WEB_BUTTON_LABEL,
+            adminUrl,
+            token
+          );
 
-          // Para rate limit, siempre enviar botón web (incluso sin login token)
-          // Para otros casos, solo si hay login token
-          if (isRateLimitError || (loginToken && result.webButtonUrl)) {
-            const webUrl = process.env.DOMAIN || 'https://atelierpoz.com';
-            const adminUrl = loginToken 
-              ? `${webUrl}/admin?token=${encodeURIComponent(loginToken)}`
-              : `${webUrl}/admin`;
-            
-            const buttonMessage = isRateLimitError
-              ? 'Mientras tanto, usa el panel web 👇'
-              : 'Gestiona tu tienda desde el panel web 👇';
-            
-            await sendWhatsAppCtaUrl(
-              phoneNumberId,
-              from,
-              buttonMessage,
-              WEB_BUTTON_LABEL,
-              adminUrl,
-              token
-            );
-          }
-
-          console.log(`[groq-webhook] Respuesta enviada a ${from}`);
+          console.log(`[groq-webhook] Respuesta enviada a ${from} (dueño de tienda, solo consultas).`);
           
         } catch (err) {
           console.error('[groq-webhook] Error procesando mensaje:', err);

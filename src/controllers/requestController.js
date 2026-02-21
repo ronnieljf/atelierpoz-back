@@ -27,9 +27,15 @@ export async function createRequestHandler(req, res, next) {
       total,
       currency,
       status,
+      deliveryMethod,
+      deliveryAddress,
+      deliveryReference,
+      deliveryRecipientName,
+      deliveryRecipientPhone,
+      deliveryDate,
+      deliveryNotes,
     } = req.body;
 
-    // Validaciones básicas
     if (!storeId) {
       return res.status(400).json({
         success: false,
@@ -61,6 +67,13 @@ export async function createRequestHandler(req, res, next) {
       total,
       currency,
       status,
+      deliveryMethod,
+      deliveryAddress,
+      deliveryReference,
+      deliveryRecipientName,
+      deliveryRecipientPhone,
+      deliveryDate,
+      deliveryNotes,
     });
 
     if (customerPhone) {
@@ -86,7 +99,7 @@ export async function createRequestHandler(req, res, next) {
         error: error.message,
       });
     }
-    if (error.message && (error.message.includes('debe contener') || error.message.includes('debe ser'))) {
+    if (error.message && (error.message.includes('debe contener') || error.message.includes('debe ser') || error.message.includes('dirección de envío'))) {
       return res.status(400).json({
         success: false,
         error: error.message,

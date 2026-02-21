@@ -30,6 +30,13 @@ export async function createRequest(requestData) {
     total,
     currency = 'USD',
     status = 'pending',
+    deliveryMethod = 'pickup',
+    deliveryAddress,
+    deliveryReference,
+    deliveryRecipientName,
+    deliveryRecipientPhone,
+    deliveryDate,
+    deliveryNotes,
   } = requestData;
 
   // Validar que storeId existe
@@ -53,10 +60,15 @@ export async function createRequest(requestData) {
     throw new Error('El total debe ser un número válido');
   }
 
+  const method = deliveryMethod === 'delivery' ? 'delivery' : 'pickup';
+
+  if (method === 'delivery' && !deliveryAddress?.trim()) {
+    throw new Error('La dirección de envío es obligatoria para delivery');
+  }
+
   const client = await getClient();
   try {
     await client.query('BEGIN');
-    // Bloquear por tienda para asignar order_number sin duplicados
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [storeId]);
     const nextRes = await client.query(
       'SELECT COALESCE(MAX(order_number), 0) + 1 AS next FROM requests WHERE store_id = $1',
@@ -75,9 +87,16 @@ export async function createRequest(requestData) {
         status,
         total,
         currency,
-        order_number
+        order_number,
+        delivery_method,
+        delivery_address,
+        delivery_reference,
+        delivery_recipient_name,
+        delivery_recipient_phone,
+        delivery_date,
+        delivery_notes
       )
-      VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10)
+      VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
       RETURNING 
         id,
         store_id,
@@ -90,6 +109,13 @@ export async function createRequest(requestData) {
         total,
         currency,
         order_number,
+        delivery_method,
+        delivery_address,
+        delivery_reference,
+        delivery_recipient_name,
+        delivery_recipient_phone,
+        delivery_date,
+        delivery_notes,
         created_at,
         updated_at`,
       [
@@ -103,6 +129,13 @@ export async function createRequest(requestData) {
         totalNum,
         currency,
         orderNumber,
+        method,
+        method === 'delivery' ? (deliveryAddress || null) : null,
+        method === 'delivery' ? (deliveryReference || null) : null,
+        method === 'delivery' ? (deliveryRecipientName || null) : null,
+        method === 'delivery' ? (deliveryRecipientPhone || null) : null,
+        method === 'delivery' && deliveryDate ? new Date(deliveryDate) : null,
+        method === 'delivery' ? (deliveryNotes || null) : null,
       ]
     );
     await client.query('COMMIT');
@@ -164,7 +197,6 @@ export async function getRequestsByStore(storeId, options = {}) {
   );
   const total = countResult.rows[0]?.total || 0;
 
-  // Obtener requests (incluye si ya tiene cuenta por cobrar asociada)
   let querySql = `
     SELECT 
       r.id,
@@ -178,6 +210,13 @@ export async function getRequestsByStore(storeId, options = {}) {
       r.status,
       r.total,
       r.currency,
+      r.delivery_method,
+      r.delivery_address,
+      r.delivery_reference,
+      r.delivery_recipient_name,
+      r.delivery_recipient_phone,
+      r.delivery_date,
+      r.delivery_notes,
       r.created_at,
       r.updated_at,
       EXISTS (SELECT 1 FROM receivables rec WHERE rec.request_id = r.id AND rec.store_id = r.store_id) AS has_receivable
@@ -224,6 +263,13 @@ export async function getRequestById(requestId, storeId) {
       status,
       total,
       currency,
+      delivery_method,
+      delivery_address,
+      delivery_reference,
+      delivery_recipient_name,
+      delivery_recipient_phone,
+      delivery_date,
+      delivery_notes,
       created_at,
       updated_at
     FROM requests
@@ -593,6 +639,13 @@ export async function updateRequestStatus(requestId, storeId, status) {
        status,
        total,
        currency,
+       delivery_method,
+       delivery_address,
+       delivery_reference,
+       delivery_recipient_name,
+       delivery_recipient_phone,
+       delivery_date,
+       delivery_notes,
        created_at,
        updated_at`,
     [status, requestId, storeId]
