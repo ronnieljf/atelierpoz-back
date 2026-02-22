@@ -10,9 +10,11 @@ import {
   getReceivableById,
   getReceivablesByIds,
   updateReceivable,
+  reopenReceivable,
   updateReceivableItems,
   getPaymentsByReceivableId,
   createReceivablePayment,
+  deleteReceivablePayment,
   getReceivablesLogs,
 } from '../services/receivableService.js';
 import { getUserStoreById, getStoreNameAndPhone } from '../services/storeService.js';
@@ -285,6 +287,56 @@ export async function getReceivableByIdHandler(req, res, next) {
 }
 
 /**
+ * DELETE /api/receivables/:id/payments/:paymentId
+ * Eliminar un abono. Solo cuentas manuales. Query: storeId (requerido)
+ */
+export async function deleteReceivablePaymentHandler(req, res, next) {
+  try {
+    const userId = req.user.id;
+    const { id, paymentId } = req.params;
+    const storeId = req.query.storeId || req.body?.storeId;
+
+    if (!storeId) {
+      return res.status(400).json({
+        success: false,
+        error: 'storeId es requerido',
+      });
+    }
+
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
+    }
+
+    const result = await deleteReceivablePayment(id, paymentId, storeId, userId);
+    if (!result) {
+      return res.status(404).json({
+        success: false,
+        error: 'Abono o cuenta por cobrar no encontrados',
+      });
+    }
+
+    return res.json({
+      success: true,
+      receivable: result.receivable,
+      payments: result.payments,
+      totalPaid: result.totalPaid,
+    });
+  } catch (error) {
+    if (error.message && error.message.includes('Solo se pueden eliminar abonos')) {
+      return res.status(400).json({
+        success: false,
+        error: error.message,
+      });
+    }
+    next(error);
+  }
+}
+
+/**
  * GET /api/receivables/:id/logs
  * Trazabilidad de acciones sobre la cuenta por cobrar.
  */
@@ -308,6 +360,54 @@ export async function getReceivableLogsHandler(req, res, next) {
     }
     return res.json({ success: true, logs });
   } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/receivables/:id/reopen
+ * Reabrir una cuenta por cobrar cobrada (solo cuentas manuales). Body: { storeId }
+ */
+export async function reopenReceivableHandler(req, res, next) {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+    const { storeId } = req.body;
+
+    if (!storeId) {
+      return res.status(400).json({
+        success: false,
+        error: 'storeId es requerido',
+      });
+    }
+
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
+    }
+
+    const receivable = await reopenReceivable(id, storeId, userId);
+    if (!receivable) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cuenta por cobrar no encontrada',
+      });
+    }
+
+    return res.json({
+      success: true,
+      receivable,
+    });
+  } catch (error) {
+    if (error.message && error.message.includes('Solo se puede reabrir')) {
+      return res.status(400).json({
+        success: false,
+        error: error.message,
+      });
+    }
     next(error);
   }
 }

@@ -8,8 +8,10 @@ import {
   getPendingTotalByStore,
   getExpenseById,
   updateExpense,
+  reopenExpense,
   createExpensePayment,
   getPaymentsByExpenseId,
+  deleteExpensePayment,
   getExpenseLogs,
 } from '../services/expenseService.js';
 import { getUserStoreById } from '../services/storeService.js';
@@ -146,6 +148,33 @@ export async function getExpensePaymentsHandler(req, res, next) {
 }
 
 /**
+ * POST /api/expenses/:id/reopen
+ * Reabrir cuenta pagada (volver a pendiente). Body: { storeId }
+ */
+export async function reopenExpenseHandler(req, res, next) {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+    const storeId = req.body.storeId || req.query.storeId;
+
+    if (!storeId) return res.status(400).json({ success: false, error: 'storeId es requerido' });
+
+    const store = await getUserStoreById(storeId, userId);
+    if (!store) return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
+
+    const expense = await reopenExpense(id, storeId, userId);
+    if (!expense) return res.status(404).json({ success: false, error: 'Gasto no encontrado' });
+
+    return res.json({ success: true, expense });
+  } catch (error) {
+    if (error.message && error.message.includes('Solo se puede reabrir')) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    next(error);
+  }
+}
+
+/**
  * POST /api/expenses/:id/payments
  */
 export async function createExpensePaymentHandler(req, res, next) {
@@ -173,6 +202,34 @@ export async function createExpensePaymentHandler(req, res, next) {
     });
 
     return res.status(201).json({ success: true, payment });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * DELETE /api/expenses/:id/payments/:paymentId
+ * Eliminar un abono. Query: storeId (requerido)
+ */
+export async function deleteExpensePaymentHandler(req, res, next) {
+  try {
+    const userId = req.user.id;
+    const { id, paymentId } = req.params;
+    const storeId = req.query.storeId || req.body?.storeId;
+
+    if (!storeId) return res.status(400).json({ success: false, error: 'storeId es requerido' });
+
+    const store = await getUserStoreById(storeId, userId);
+    if (!store) return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
+
+    const result = await deleteExpensePayment(id, paymentId, storeId, userId);
+    if (!result) return res.status(404).json({ success: false, error: 'Abono o gasto no encontrados' });
+
+    return res.json({
+      success: true,
+      expense: result.expense,
+      payments: result.payments,
+    });
   } catch (error) {
     next(error);
   }

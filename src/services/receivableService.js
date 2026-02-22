@@ -513,6 +513,56 @@ export async function updateReceivableItems(receivableId, storeId, newItems, new
 }
 
 /**
+ * Reabrir una cuenta por cobrar cobrada (volver a pendiente). Aplica a manuales y a cuentas desde pedido.
+ * Permite corregir abonos si se equivocaron al registrar el monto.
+ * Si la cuenta viene de un pedido, el pedido vuelve a estado 'pending'.
+ * @param {string} receivableId - ID de la cuenta
+ * @param {string} storeId - ID de la tienda
+ * @param {string} updatedByUserId - Usuario que reabre (para trazabilidad)
+ * @returns {Promise<Object|null>} Cuenta actualizada o null
+ */
+export async function reopenReceivable(receivableId, storeId, updatedByUserId) {
+  const row = await getReceivableById(receivableId, storeId);
+  if (!row) return null;
+  if (row.status !== 'paid') {
+    throw new Error('Solo se puede reabrir una cuenta que esté marcada como cobrada.');
+  }
+
+  await query(
+    `UPDATE receivables SET status = 'pending', paid_at = NULL, updated_by = $1, updated_at = CURRENT_TIMESTAMP
+     WHERE id = $2 AND store_id = $3`,
+    [updatedByUserId, receivableId, storeId]
+  );
+  await query(
+    `INSERT INTO receivables_logs (receivable_id, user_id, action, details) VALUES ($1, $2, 'reopened', '{}'::jsonb)`,
+    [receivableId, updatedByUserId]
+  );
+
+  if (row.requestId) {
+    try {
+      await updateRequestStatus(row.requestId, storeId, 'pending');
+    } catch (err) {
+      console.error('Error al revertir estado del pedido al reabrir cuenta:', err);
+    }
+  }
+
+  const result = await query(
+    `SELECT r.id, r.store_id, r.receivable_number, r.created_by, r.updated_by, r.customer_name, r.customer_phone, r.description,
+      r.amount, r.currency, r.status, r.request_id, r.paid_at, r.created_at, r.updated_at,
+      s.name as store_name,
+      u_created.name as created_by_name, u_updated.name as updated_by_name
+     FROM receivables r
+     LEFT JOIN stores s ON s.id = r.store_id
+     LEFT JOIN users u_created ON u_created.id = r.created_by
+     LEFT JOIN users u_updated ON u_updated.id = r.updated_by
+     WHERE r.id = $1 AND r.store_id = $2`,
+    [receivableId, storeId]
+  );
+  if (result.rows.length === 0) return null;
+  return formatReceivable(result.rows[0]);
+}
+
+/**
  * Actualizar una cuenta por cobrar (editar campos o marcar como cobrada/cancelada).
  * - Marcar cobrada + tiene pedido vinculado → se marca el pedido completado; stock ya fue descontado al crear la cuenta.
  * - Cancelar cuenta vinculada a pedido → se restaura el stock del pedido.
@@ -732,6 +782,63 @@ export async function createReceivablePayment(receivableId, storeId, data, creat
     }
     if (receivable.requestId) {
       await updateRequestStatus(receivable.requestId, storeId, 'completed');
+    }
+  }
+
+  return getPaymentsByReceivableId(receivableId, storeId);
+}
+
+/**
+ * Eliminar un abono de una cuenta por cobrar. Aplica a manuales y a cuentas desde pedido.
+ * Tras eliminar, si el total abonado < monto de la cuenta, se pasa la cuenta a pendiente.
+ * Si la cuenta viene de un pedido, el pedido vuelve a estado 'pending'.
+ */
+export async function deleteReceivablePayment(receivableId, paymentId, storeId, deletedByUserId = null) {
+  const receivable = await getReceivableById(receivableId, storeId);
+  if (!receivable) return null;
+
+  const checkPayment = await query(
+    `SELECT id FROM receivable_payments WHERE id = $1 AND receivable_id = $2`,
+    [paymentId, receivableId]
+  );
+  if (checkPayment.rows.length === 0) {
+    return null;
+  }
+
+  await query(`DELETE FROM receivable_payments WHERE id = $1 AND receivable_id = $2`, [paymentId, receivableId]);
+
+  if (deletedByUserId) {
+    await query(
+      `INSERT INTO receivables_logs (receivable_id, user_id, action, details) VALUES ($1, $2, 'payment_deleted', $3::jsonb)`,
+      [receivableId, deletedByUserId, JSON.stringify({ paymentId })]
+    );
+  }
+
+  const sumResult = await query(
+    `SELECT COALESCE(SUM(amount), 0)::numeric as total FROM receivable_payments WHERE receivable_id = $1`,
+    [receivableId]
+  );
+  const totalPaid = parseFloat(sumResult.rows[0]?.total || 0);
+  const receivableAmount = parseFloat(receivable.amount);
+
+  if (totalPaid < receivableAmount) {
+    await query(
+      `UPDATE receivables SET status = 'pending', paid_at = NULL, updated_by = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2 AND store_id = $3`,
+      [deletedByUserId, receivableId, storeId]
+    );
+    if (deletedByUserId) {
+      await query(
+        `INSERT INTO receivables_logs (receivable_id, user_id, action, details) VALUES ($1, $2, 'reopened_after_payment_deleted', '{}'::jsonb)`,
+        [receivableId, deletedByUserId]
+      );
+    }
+    if (receivable.requestId) {
+      try {
+        await updateRequestStatus(receivable.requestId, storeId, 'pending');
+      } catch (err) {
+        console.error('Error al revertir estado del pedido al eliminar abono:', err);
+      }
     }
   }
 

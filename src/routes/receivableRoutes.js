@@ -12,10 +12,12 @@ import {
   getPendingTotalHandler,
   getReceivableByIdHandler,
   getReceivableLogsHandler,
+  reopenReceivableHandler,
   updateReceivableHandler,
   updateReceivableItemsHandler,
   getReceivablePaymentsHandler,
   createReceivablePaymentHandler,
+  deleteReceivablePaymentHandler,
   sendReceivableRemindersHandler,
   bulkUpdateReceivableStatusHandler,
 } from '../controllers/receivableController.js';
@@ -117,10 +119,25 @@ const paymentValidation = [
 router.post('/:id/payments', requirePermission('receivables.edit', storeIdQOrB), paymentValidation, createReceivablePaymentHandler);
 
 /**
+ * DELETE /api/receivables/:id/payments/:paymentId
+ * Eliminar abono (solo cuentas manuales). Query: storeId (requerido)
+ */
+router.delete('/:id/payments/:paymentId', requirePermission('receivables.edit', storeIdQOrB), deleteReceivablePaymentHandler);
+
+/**
  * GET /api/receivables/:id/logs
  * Trazabilidad. Query: storeId (requerido)
  */
 router.get('/:id/logs', requirePermission('receivables.view', storeIdQOrB), getReceivableLogsHandler);
+
+/**
+ * POST /api/receivables/:id/reopen
+ * Reabrir cuenta cobrada (solo manuales). Body: { storeId }
+ */
+const reopenValidation = [
+  body('storeId').notEmpty().withMessage('storeId es requerido').isUUID().withMessage('storeId debe ser UUID'),
+];
+router.post('/:id/reopen', requirePermission('receivables.edit', storeIdQOrB), reopenValidation, reopenReceivableHandler);
 
 /**
  * GET /api/receivables/:id

@@ -304,6 +304,80 @@ export async function updateExpense(expenseId, storeId, updates, updatedByUserId
 }
 
 /**
+ * Reabrir una cuenta por pagar pagada (volver a pendiente).
+ * Permite corregir abonos si se equivocaron al registrar el monto.
+ */
+export async function reopenExpense(expenseId, storeId, updatedByUserId) {
+  const expense = await getExpenseById(expenseId, storeId);
+  if (!expense) return null;
+  if (expense.status !== 'paid') {
+    throw new Error('Solo se puede reabrir una cuenta que esté marcada como pagada.');
+  }
+
+  await query(
+    `UPDATE expenses SET status = 'pending', paid_at = NULL, updated_by = $1, updated_at = CURRENT_TIMESTAMP
+     WHERE id = $2 AND store_id = $3`,
+    [updatedByUserId, expenseId, storeId]
+  );
+  await query(
+    `INSERT INTO expenses_logs (expense_id, user_id, action, details) VALUES ($1, $2, 'reopened', '{}'::jsonb)`,
+    [expenseId, updatedByUserId]
+  );
+
+  return getExpenseById(expenseId, storeId);
+}
+
+/**
+ * Eliminar un pago/abono de una cuenta por pagar.
+ * Tras eliminar, si el total abonado < monto de la cuenta, se pasa la cuenta a pendiente.
+ */
+export async function deleteExpensePayment(expenseId, paymentId, storeId, deletedByUserId = null) {
+  const expense = await getExpenseById(expenseId, storeId);
+  if (!expense) return null;
+
+  const checkPayment = await query(
+    `SELECT id FROM expense_payments WHERE id = $1 AND expense_id = $2`,
+    [paymentId, expenseId]
+  );
+  if (checkPayment.rows.length === 0) return null;
+
+  await query(`DELETE FROM expense_payments WHERE id = $1 AND expense_id = $2`, [paymentId, expenseId]);
+
+  if (deletedByUserId) {
+    await query(
+      `INSERT INTO expenses_logs (expense_id, user_id, action, details) VALUES ($1, $2, 'payment_deleted', $3::jsonb)`,
+      [expenseId, deletedByUserId, JSON.stringify({ paymentId })]
+    );
+  }
+
+  const sumResult = await query(
+    `SELECT COALESCE(SUM(amount), 0)::numeric AS total FROM expense_payments WHERE expense_id = $1`,
+    [expenseId]
+  );
+  const totalPaid = parseFloat(sumResult.rows[0]?.total || 0);
+  const expenseAmount = parseFloat(expense.amount);
+
+  if (totalPaid < expenseAmount) {
+    await query(
+      `UPDATE expenses SET status = 'pending', paid_at = NULL, updated_by = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2 AND store_id = $3`,
+      [deletedByUserId, expenseId, storeId]
+    );
+    if (deletedByUserId) {
+      await query(
+        `INSERT INTO expenses_logs (expense_id, user_id, action, details) VALUES ($1, $2, 'reopened_after_payment_deleted', '{}'::jsonb)`,
+        [expenseId, deletedByUserId]
+      );
+    }
+  }
+
+  return {
+    expense: await getExpenseById(expenseId, storeId),
+    payments: await getPaymentsByExpenseId(expenseId),
+  };
+}
+
+/**
  * Registrar pago/abono a un gasto
  */
 export async function createExpensePayment(data) {

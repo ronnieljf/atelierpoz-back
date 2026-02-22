@@ -11,8 +11,10 @@ import {
   getPendingTotalHandler,
   getExpenseByIdHandler,
   updateExpenseHandler,
+  reopenExpenseHandler,
   getExpensePaymentsHandler,
   createExpensePaymentHandler,
+  deleteExpensePaymentHandler,
   getExpenseLogsHandler,
 } from '../controllers/expenseController.js';
 import { authenticateToken } from '../middleware/auth.js';
@@ -47,6 +49,11 @@ const paymentValidation = [
   body('notes').optional().trim().isLength({ max: 1000 }),
 ];
 router.post('/:id/payments', requirePermission('expenses.edit', storeIdQOrB), paymentValidation, createExpensePaymentHandler);
+
+router.delete('/:id/payments/:paymentId', requirePermission('expenses.edit', storeIdQOrB), deleteExpensePaymentHandler);
+
+const reopenValidation = [body('storeId').notEmpty().isUUID()];
+router.post('/:id/reopen', requirePermission('expenses.edit', storeIdQOrB), reopenValidation, reopenExpenseHandler);
 
 router.get('/:id/logs', requirePermission('expenses.view', storeIdQOrB), getExpenseLogsHandler);
 router.get('/:id', requirePermission('expenses.view', storeIdQOrB), getExpenseByIdHandler);
