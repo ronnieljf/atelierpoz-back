@@ -11,6 +11,7 @@ import {
   updateRequestStatusHandler,
 } from '../controllers/requestController.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { requirePermission } from '../middleware/permission.js';
 
 const router = express.Router();
 
@@ -59,28 +60,13 @@ const createRequestValidation = [
 ];
 router.post('/', createRequestValidation, createRequestHandler);
 
-// Todas las demás rutas requieren autenticación
 router.use(authenticateToken);
 
-/**
- * GET /api/requests
- * Obtener todos los requests de una tienda
- * Query params: storeId (requerido), status? (opcional), limit?, offset?
- */
-router.get('/', getRequestsHandler);
+const storeIdQOrB = (req) => req.query.storeId || req.body?.storeId;
 
-/**
- * GET /api/requests/:id
- * Obtener un request específico
- * Query params: storeId (requerido)
- */
-router.get('/:id', getRequestByIdHandler);
+router.get('/', requirePermission('requests.view', storeIdQOrB), getRequestsHandler);
+router.get('/:id', requirePermission('requests.view', storeIdQOrB), getRequestByIdHandler);
 
-/**
- * PUT /api/requests/:id/status
- * Actualizar el estado de un request
- * Body: { storeId, status }
- */
 const updateStatusValidation = [
   body('storeId')
     .notEmpty()
@@ -93,6 +79,6 @@ const updateStatusValidation = [
     .isIn(['pending', 'processing', 'completed', 'cancelled'])
     .withMessage('El estado debe ser pending, processing, completed o cancelled'),
 ];
-router.put('/:id/status', updateStatusValidation, updateRequestStatusHandler);
+router.put('/:id/status', requirePermission('requests.edit', storeIdQOrB), updateStatusValidation, updateRequestStatusHandler);
 
 export default router;

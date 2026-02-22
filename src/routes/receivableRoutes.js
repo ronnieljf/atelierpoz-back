@@ -20,22 +20,15 @@ import {
   bulkUpdateReceivableStatusHandler,
 } from '../controllers/receivableController.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { requirePermission } from '../middleware/permission.js';
 
 const router = express.Router();
+const storeIdQOrB = (req) => req.query.storeId || req.body?.storeId;
 
 router.use(authenticateToken);
 
-/**
- * GET /api/receivables
- * Query: storeId (requerido), status?, limit?, offset?
- */
-router.get('/', getReceivablesHandler);
-
-/**
- * GET /api/receivables/pending-total
- * Query: storeId (requerido). Retorna total pendiente por cobrar por moneda.
- */
-router.get('/pending-total', getPendingTotalHandler);
+router.get('/', requirePermission('receivables.view', storeIdQOrB), getReceivablesHandler);
+router.get('/pending-total', requirePermission('receivables.view', storeIdQOrB), getPendingTotalHandler);
 
 /**
  * POST /api/receivables/send-reminders
@@ -47,7 +40,7 @@ const sendRemindersValidation = [
     .isArray({ min: 1 })
     .withMessage('recipients debe ser un array con al menos un elemento { phone, receivableIds }'),
 ];
-router.post('/send-reminders', sendRemindersValidation, sendReceivableRemindersHandler);
+router.post('/send-reminders', requirePermission('receivables.edit', storeIdQOrB), sendRemindersValidation, sendReceivableRemindersHandler);
 
 /**
  * POST /api/receivables/bulk-update-status
@@ -63,7 +56,7 @@ const bulkUpdateStatusValidation = [
     .isIn(['paid', 'cancelled'])
     .withMessage('newStatus debe ser paid o cancelled'),
 ];
-router.post('/bulk-update-status', bulkUpdateStatusValidation, bulkUpdateReceivableStatusHandler);
+router.post('/bulk-update-status', requirePermission('receivables.edit', storeIdQOrB), bulkUpdateStatusValidation, bulkUpdateReceivableStatusHandler);
 
 /**
  * POST /api/receivables/from-request
@@ -78,7 +71,7 @@ const fromRequestValidation = [
   body('initialPayment.amount').optional().isFloat({ min: 0 }).withMessage('Abono inicial debe ser mayor o igual a 0'),
   body('initialPayment.notes').optional().trim().isLength({ max: 1000 }),
 ];
-router.post('/from-request', fromRequestValidation, createReceivableFromRequestHandler);
+router.post('/from-request', requirePermission('receivables.create', storeIdQOrB), fromRequestValidation, createReceivableFromRequestHandler);
 
 /**
  * POST /api/receivables
@@ -99,13 +92,13 @@ const createValidation = [
   body('initialPayment.amount').optional().isFloat({ min: 0 }).withMessage('Abono inicial debe ser mayor o igual a 0'),
   body('initialPayment.notes').optional().trim().isLength({ max: 1000 }),
 ];
-router.post('/', createValidation, createReceivableHandler);
+router.post('/', requirePermission('receivables.create', storeIdQOrB), createValidation, createReceivableHandler);
 
 /**
  * GET /api/receivables/:id/payments
  * Listar abonos. Query: storeId (requerido)
  */
-router.get('/:id/payments', getReceivablePaymentsHandler);
+router.get('/:id/payments', requirePermission('receivables.view', storeIdQOrB), getReceivablePaymentsHandler);
 
 /**
  * POST /api/receivables/:id/payments
@@ -121,19 +114,19 @@ const paymentValidation = [
   body('currency').optional().isIn(['USD', 'EUR', 'VES']),
   body('notes').optional().trim().isLength({ max: 1000 }),
 ];
-router.post('/:id/payments', paymentValidation, createReceivablePaymentHandler);
+router.post('/:id/payments', requirePermission('receivables.edit', storeIdQOrB), paymentValidation, createReceivablePaymentHandler);
 
 /**
  * GET /api/receivables/:id/logs
  * Trazabilidad. Query: storeId (requerido)
  */
-router.get('/:id/logs', getReceivableLogsHandler);
+router.get('/:id/logs', requirePermission('receivables.view', storeIdQOrB), getReceivableLogsHandler);
 
 /**
  * GET /api/receivables/:id
  * Query: storeId (requerido)
  */
-router.get('/:id', getReceivableByIdHandler);
+router.get('/:id', requirePermission('receivables.view', storeIdQOrB), getReceivableByIdHandler);
 
 /**
  * PUT /api/receivables/:id/items
@@ -144,7 +137,7 @@ const updateItemsValidation = [
   body('items').isArray({ min: 1 }).withMessage('items debe tener al menos un producto'),
   body('total').isFloat({ min: 0 }).withMessage('total debe ser mayor o igual a 0'),
 ];
-router.put('/:id/items', updateItemsValidation, updateReceivableItemsHandler);
+router.put('/:id/items', requirePermission('receivables.edit', storeIdQOrB), updateItemsValidation, updateReceivableItemsHandler);
 
 /**
  * PUT /api/receivables/:id
@@ -159,6 +152,6 @@ const updateValidation = [
   body('currency').optional().isIn(['USD', 'EUR', 'VES']),
   body('status').optional().isIn(['pending', 'paid', 'cancelled']).withMessage('Estado debe ser pending, paid o cancelled'),
 ];
-router.put('/:id', updateValidation, updateReceivableHandler);
+router.put('/:id', requirePermission('receivables.edit', storeIdQOrB), updateValidation, updateReceivableHandler);
 
 export default router;

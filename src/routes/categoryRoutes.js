@@ -15,14 +15,14 @@ import {
   deleteCategoryHandler,
 } from '../controllers/categoryController.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { requirePermission, storeIdFromQueryOrBody } from '../middleware/permission.js';
 
 const router = express.Router();
 
 /**
  * GET /api/categories/by-store?storeId=
- * Solo categorías de la tienda (requiere auth y acceso a la tienda)
  */
-router.get('/by-store', authenticateToken, getCategoriesByStoreHandler);
+router.get('/by-store', authenticateToken, requirePermission('categories.view', (req) => req.query.storeId), getCategoriesByStoreHandler);
 
 /**
  * GET /api/categories
@@ -38,21 +38,19 @@ router.get('/:id', getCategory);
 
 /**
  * POST /api/categories
- * Crear una nueva categoría (requiere autenticación)
- * Body: { name, slug }
+ * Body: { name, slug?, storeId }
  */
-router.post('/', authenticateToken, createCategoryHandler);
+router.post('/', authenticateToken, requirePermission('categories.create', (req) => req.body?.storeId || req.body?.store_id), createCategoryHandler);
 
 /**
  * PUT /api/categories/:id
- * Actualizar una categoría (requiere autenticación)
- * Body: { name?, slug? }
+ * Body: { name?, slug? } — permiso se valida en controlador (storeId de la categoría)
  */
 router.put('/:id', authenticateToken, updateCategoryHandler);
 
 /**
  * DELETE /api/categories/:id
- * Eliminar una categoría (requiere autenticación)
+ * Permiso se valida en controlador (storeId de la categoría)
  */
 router.delete('/:id', authenticateToken, deleteCategoryHandler);
 

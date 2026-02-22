@@ -8,8 +8,6 @@ import { searchProductsForPOS, getProductPOSOptions } from '../services/productS
 
 function checkStoreAccess(req, storeId) {
   const userId = req.user.id;
-  const isAdmin = req.user.role === 'admin';
-  if (isAdmin) return Promise.resolve(true);
   return getUserStoreById(storeId, userId).then((store) => !!store);
 }
 

@@ -13,51 +13,32 @@ import {
   deleteClientHandler,
 } from '../controllers/clientController.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { requirePermission, storeIdFromQueryOrBody } from '../middleware/permission.js';
 
 const router = express.Router();
 
 router.use(authenticateToken);
 
-/**
- * GET /api/clients
- * Query: storeId (requerido), limit?, offset?, search?
- */
-router.get('/', getClientsHandler);
+const storeIdQueryOrBody = (req) => req.query.storeId || req.body?.storeId;
 
-/**
- * GET /api/clients/:id
- * Query: storeId (requerido)
- */
-router.get('/:id', getClientHandler);
+router.get('/', requirePermission('clients.view', storeIdQueryOrBody), getClientsHandler);
+router.get('/:id', requirePermission('clients.view', storeIdQueryOrBody), getClientHandler);
 
-/**
- * POST /api/clients
- * Body: { storeId, name?, phone?, email? }
- */
 const createValidation = [
   body('storeId').notEmpty().withMessage('storeId es requerido').isUUID().withMessage('storeId debe ser UUID'),
   body('name').optional().trim().isLength({ max: 500 }),
   body('phone').optional().trim().isLength({ max: 50 }),
   body('email').optional().trim().isEmail().withMessage('Email debe ser válido'),
 ];
-router.post('/', createValidation, createClientHandler);
+router.post('/', requirePermission('clients.create', storeIdQueryOrBody), createValidation, createClientHandler);
 
-/**
- * PUT /api/clients/:id
- * Body: { storeId, name?, phone?, email? }
- */
 const updateValidation = [
   body('storeId').notEmpty().withMessage('storeId es requerido').isUUID().withMessage('storeId debe ser UUID'),
   body('name').optional().trim().isLength({ max: 500 }),
   body('phone').optional().trim().isLength({ max: 50 }),
   body('email').optional().trim().isEmail().withMessage('Email debe ser válido'),
 ];
-router.put('/:id', updateValidation, updateClientHandler);
-
-/**
- * DELETE /api/clients/:id
- * Query: storeId (requerido)
- */
-router.delete('/:id', deleteClientHandler);
+router.put('/:id', requirePermission('clients.edit', storeIdQueryOrBody), updateValidation, updateClientHandler);
+router.delete('/:id', requirePermission('clients.edit', storeIdQueryOrBody), deleteClientHandler);
 
 export default router;

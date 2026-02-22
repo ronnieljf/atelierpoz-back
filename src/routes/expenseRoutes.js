@@ -16,18 +16,16 @@ import {
   getExpenseLogsHandler,
 } from '../controllers/expenseController.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { requirePermission } from '../middleware/permission.js';
 
 const router = express.Router();
+const storeIdQOrB = (req) => req.query.storeId || req.body?.storeId;
 
 router.use(authenticateToken);
 
-/** GET /api/expenses?storeId=&status=&categoryId=&limit=&offset= */
-router.get('/', getExpensesHandler);
+router.get('/', requirePermission('expenses.view', storeIdQOrB), getExpensesHandler);
+router.get('/pending-total', requirePermission('expenses.view', storeIdQOrB), getPendingTotalHandler);
 
-/** GET /api/expenses/pending-total?storeId= */
-router.get('/pending-total', getPendingTotalHandler);
-
-/** POST /api/expenses */
 const createValidation = [
   body('storeId').notEmpty().withMessage('storeId es requerido').isUUID(),
   body('amount').notEmpty().withMessage('El monto es requerido').isFloat({ min: 0 }),
@@ -38,27 +36,21 @@ const createValidation = [
   body('categoryId').optional().isUUID(),
   body('dueDate').optional().isISO8601(),
 ];
-router.post('/', createValidation, createExpenseHandler);
+router.post('/', requirePermission('expenses.create', storeIdQOrB), createValidation, createExpenseHandler);
 
-/** GET /api/expenses/:id/payments */
-router.get('/:id/payments', getExpensePaymentsHandler);
+router.get('/:id/payments', requirePermission('expenses.view', storeIdQOrB), getExpensePaymentsHandler);
 
-/** POST /api/expenses/:id/payments */
 const paymentValidation = [
   body('storeId').notEmpty().isUUID(),
   body('amount').notEmpty().isFloat({ min: 0.01 }),
   body('currency').optional().isIn(['USD', 'EUR', 'VES']),
   body('notes').optional().trim().isLength({ max: 1000 }),
 ];
-router.post('/:id/payments', paymentValidation, createExpensePaymentHandler);
+router.post('/:id/payments', requirePermission('expenses.edit', storeIdQOrB), paymentValidation, createExpensePaymentHandler);
 
-/** GET /api/expenses/:id/logs */
-router.get('/:id/logs', getExpenseLogsHandler);
+router.get('/:id/logs', requirePermission('expenses.view', storeIdQOrB), getExpenseLogsHandler);
+router.get('/:id', requirePermission('expenses.view', storeIdQOrB), getExpenseByIdHandler);
 
-/** GET /api/expenses/:id?storeId= */
-router.get('/:id', getExpenseByIdHandler);
-
-/** PUT /api/expenses/:id */
 const updateValidation = [
   body('storeId').notEmpty().isUUID(),
   body('vendorName').optional().trim().isLength({ max: 255 }),
@@ -70,6 +62,6 @@ const updateValidation = [
   body('categoryId').optional(),
   body('dueDate').optional(),
 ];
-router.put('/:id', updateValidation, updateExpenseHandler);
+router.put('/:id', requirePermission('expenses.edit', storeIdQOrB), updateValidation, updateExpenseHandler);
 
 export default router;

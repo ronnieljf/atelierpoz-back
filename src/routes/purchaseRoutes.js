@@ -11,15 +11,15 @@ import {
   cancelPurchaseHandler,
 } from '../controllers/purchaseController.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { requirePermission } from '../middleware/permission.js';
 
 const router = express.Router();
+const storeIdQOrB = (req) => req.query.storeId || req.body?.storeId;
 
 router.use(authenticateToken);
 
-/** GET /api/purchases?storeId=&status=&categoryId=&vendorId=&limit=&offset= */
-router.get('/', getPurchasesHandler);
+router.get('/', requirePermission('purchases.view', storeIdQOrB), getPurchasesHandler);
 
-/** POST /api/purchases */
 const createValidation = [
   body('storeId').notEmpty().isUUID(),
   body('total').notEmpty().isFloat({ min: 0 }),
@@ -30,12 +30,9 @@ const createValidation = [
   body('paymentMethod').optional().trim().isLength({ max: 100 }),
   body('notes').optional().trim().isLength({ max: 2000 }),
 ];
-router.post('/', createValidation, createPurchaseHandler);
+router.post('/', requirePermission('purchases.create', storeIdQOrB), createValidation, createPurchaseHandler);
 
-/** GET /api/purchases/:id?storeId= */
-router.get('/:id', getPurchaseByIdHandler);
-
-/** POST /api/purchases/:id/cancel */
-router.post('/:id/cancel', cancelPurchaseHandler);
+router.get('/:id', requirePermission('purchases.view', storeIdQOrB), getPurchaseByIdHandler);
+router.post('/:id/cancel', requirePermission('purchases.edit', storeIdQOrB), cancelPurchaseHandler);
 
 export default router;

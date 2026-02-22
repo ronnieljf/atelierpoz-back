@@ -17,6 +17,7 @@ import {
   reorderProductsHandler,
 } from '../controllers/productController.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { requirePermission, storeIdFromQueryOrBody } from '../middleware/permission.js';
 
 const router = express.Router();
 
@@ -47,57 +48,50 @@ router.use(authenticateToken);
 
 /**
  * GET /api/products
- * Obtener todos los productos de una tienda
  * Query params: storeId (requerido), categoryId (opcional), limit, offset
  */
-router.get('/', getProducts);
+router.get('/', requirePermission('products.view', storeIdFromQueryOrBody), getProducts);
 
 /**
  * GET /api/products/admin
- * Obtener todos los productos de todas las tiendas
  * Query params: storeId (opcional), categoryId (opcional), limit, offset, search
  */
 router.get('/admin', getProductsAdminHandler);
 
 /**
  * POST /api/products/reorder
- * Reordenar productos de una tienda. Body: { storeId, productIds: string[] }
+ * Body: { storeId, productIds: string[] }
  */
-router.post('/reorder', reorderProductsHandler);
+router.post('/reorder', requirePermission('products.edit', storeIdFromQueryOrBody), reorderProductsHandler);
 
 /**
  * GET /api/products/:id
- * Obtener un producto específico
  * Query params: storeId (requerido)
  */
-router.get('/:id', getProduct);
+router.get('/:id', requirePermission('products.view', storeIdFromQueryOrBody), getProduct);
 
 /**
  * POST /api/products
- * Crear un nuevo producto
- * Body: { name, description, basePrice, currency, stock, sku, categoryId, storeId, images, attributes, rating, reviewCount, tags }
+ * Body: { name, description, basePrice, currency, stock, sku, categoryId, storeId, ... }
  */
-router.post('/', createProductHandler);
+router.post('/', requirePermission('products.create', storeIdFromQueryOrBody), createProductHandler);
 
 /**
  * PUT /api/products/:id
- * Actualizar un producto
  * Body: { storeId, ...updates }
  */
-router.put('/:id', updateProductHandler);
+router.put('/:id', requirePermission('products.edit', storeIdFromQueryOrBody), updateProductHandler);
 
 /**
  * PUT /api/products/:id/out_stock
- * Poner el stock de un producto en 0
  * Query params: storeId (requerido)
  */
-router.put('/:id/out_stock', outStockHandler);
+router.put('/:id/out_stock', requirePermission('products.edit', storeIdFromQueryOrBody), outStockHandler);
 
 /**
  * DELETE /api/products/:id
- * Eliminar un producto
  * Query params: storeId (requerido)
  */
-router.delete('/:id', deleteProductHandler);
+router.delete('/:id', requirePermission('products.edit', storeIdFromQueryOrBody), deleteProductHandler);
 
 export default router;

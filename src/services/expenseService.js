@@ -158,7 +158,8 @@ export async function getExpensesByStore(storeId, options = {}) {
             ec.name AS category_name,
             ec.color AS category_color,
             v.name AS v_name,
-            v.phone AS v_phone
+            v.phone AS v_phone,
+            COALESCE((SELECT SUM(ep.amount)::numeric FROM expense_payments ep WHERE ep.expense_id = e.id), 0)::float AS total_paid
      FROM expenses e
      LEFT JOIN users uc ON e.created_by = uc.id
      LEFT JOIN users uu ON e.updated_by = uu.id
@@ -171,20 +172,26 @@ export async function getExpensesByStore(storeId, options = {}) {
   );
 
   return {
-    expenses: result.rows.map(formatExpense),
+    expenses: result.rows.map((row) => ({
+      ...formatExpense(row),
+      totalPaid: parseFloat(row.total_paid) || 0,
+    })),
     total,
   };
 }
 
 /**
- * Total pendiente por pagar agrupado por moneda
+ * Total pendiente por pagar agrupado por moneda (restando abonos)
  */
 export async function getPendingTotalByStore(storeId) {
   const result = await query(
-    `SELECT currency, COALESCE(SUM(amount), 0) AS total
-     FROM expenses
-     WHERE store_id = $1 AND status = 'pending'
-     GROUP BY currency`,
+    `SELECT e.currency,
+            COALESCE(SUM(e.amount - (
+              SELECT COALESCE(SUM(ep.amount)::numeric, 0) FROM expense_payments ep WHERE ep.expense_id = e.id
+            )), 0)::numeric AS total
+     FROM expenses e
+     WHERE e.store_id = $1 AND e.status = 'pending'
+     GROUP BY e.currency`,
     [storeId]
   );
   return result.rows.map((r) => ({ currency: r.currency, total: parseFloat(r.total) }));

@@ -15,7 +15,7 @@ import { query } from '../config/database.js';
 export async function findUserByEmail(email) {
   const normalizedEmail = email.toLowerCase().trim();
   const result = await query(
-    'SELECT id, email, password_hash, name, role FROM users WHERE email = $1',
+    'SELECT id, email, password_hash, name, role, number_stores FROM users WHERE email = $1',
     [normalizedEmail]
   );
 
@@ -126,6 +126,7 @@ export async function authenticateUser(email, password) {
       email: user.email,
       name: user.name,
       role: user.role,
+      number_stores: user.number_stores ?? 1,
     },
     token,
   };
@@ -138,7 +139,7 @@ export async function authenticateUser(email, password) {
  */
 export async function getUserById(userId) {
   const result = await query(
-    'SELECT id, email, name, role, created_at, updated_at, last_login FROM users WHERE id = $1',
+    'SELECT id, email, name, role, number_stores, created_at, updated_at, last_login FROM users WHERE id = $1',
     [userId]
   );
 
@@ -195,6 +196,7 @@ export function formatUserResponse(user) {
     email: user.email,
     name: user.name,
     role: user.role,
+    number_stores: user.number_stores ?? 1,
     ...(user.created_at && { created_at: user.created_at }),
     ...(user.updated_at && { updated_at: user.updated_at }),
     ...(user.last_login && { last_login: user.last_login }),

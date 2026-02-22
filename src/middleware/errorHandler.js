@@ -7,7 +7,7 @@ export function errorHandler(err, req, res, next) {
   if (err.code === 'LIMIT_FILE_SIZE') {
     console.error('[upload] Error Multer: archivo demasiado grande (límite 10MB).', err.message);
   } else if (err.code === 'LIMIT_FILE_COUNT') {
-    console.error('[upload] Error Multer: demasiados archivos (máx. 10).', err.message);
+    console.error('[upload] Error Multer: demasiados archivos (máx. 45).', err.message);
   } else if (err.code === 'LIMIT_UNEXPECTED_FILE') {
     console.error('[upload] Error Multer: campo inesperado (debe ser "files").', err.message);
   } else if (err.code && String(err.code).startsWith('LIMIT_')) {

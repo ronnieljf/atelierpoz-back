@@ -3,7 +3,9 @@
  * Maneja las peticiones HTTP y delega la lógica de negocio a los servicios
  */
 
-import { getUserStores, getUserStoreById, getAllActiveStores, getStoreByIdPublic, getStoreFeatureSendReminderReceivablesWhatsapp, createStore, updateStore, userHasStoreAsCreator, isStoreCreator, findUserByEmail, addUserToStore, userExistsInStore, updateUserPhoneNumber, getStoreUsers } from '../services/storeService.js';
+import { getUserStores, getUserStoreById, getAllActiveStores, getStoreByIdPublic, getStoreFeatureSendReminderReceivablesWhatsapp, createStore, updateStore, userHasStoreAsCreator, getUserStoreCountAsCreator, getUserStoreLimit, isStoreCreator, findUserByEmail, addUserToStore, userExistsInStore, updateUserPhoneNumber, getStoreUsers, removeUserFromStore } from '../services/storeService.js';
+import { assignAllPermissionsToUser } from '../services/permissionService.js';
+import { getUserPermissionCodesForStore, setUserPermissions, getAllPermissions } from '../services/permissionService.js';
 import { getCategoriesByStoreId } from '../services/categoryService.js';
 import { uploadFile } from '../services/uploadService.js';
 
@@ -93,20 +95,23 @@ export async function getStoreFeatureSendReminderReceivablesWhatsappHandler(req,
 
 /**
  * Obtener todas las tiendas del usuario actual
- * - Usuarios normales: solo ven las tiendas que crearon
- * - Admins: ven todas las tiendas activas
  */
 export async function getStores(req, res, next) {
   try {
     const userId = req.user.id;
-    const userRole = req.user.role || 'user';
 
-    const stores = await getUserStores(userId, userRole);
+    const [stores, storeCount, storeLimit] = await Promise.all([
+      getUserStores(userId),
+      getUserStoreCountAsCreator(userId),
+      getUserStoreLimit(userId),
+    ]);
 
     res.json({
       success: true,
       stores,
       count: stores.length,
+      storeLimit,
+      storeCountAsCreator: storeCount,
     });
   } catch (error) {
     next(error);
@@ -140,24 +145,26 @@ export async function getStoreById(req, res, next) {
 }
 
 /**
- * Actualizar una tienda (admins pueden editar cualquier tienda, usuarios normales solo sus propias tiendas)
+ * Actualizar una tienda
  */
 export async function updateStoreHandler(req, res, next) {
   try {
     const { id } = req.params;
     const { name, state, store_id, instagram, tiktok, description, location, iva } = req.body;
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
 
-    // Si no es admin, verificar que el usuario pertenezca a la tienda
-    if (!isAdmin) {
-      const userStore = await getUserStoreById(id, userId);
-      if (!userStore) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes permiso para editar esta tienda',
-        });
-      }
+    const userStore = await getUserStoreById(id, userId);
+    if (!userStore) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes permiso para editar esta tienda',
+      });
+    }
+    if (!userStore.is_creator) {
+      return res.status(403).json({
+        success: false,
+        error: 'Solo el creador de la tienda puede editarla',
+      });
     }
 
     // Validaciones
@@ -212,16 +219,13 @@ export async function updateStoreHandler(req, res, next) {
 
 /**
  * Crear una nueva tienda
- * - Admins pueden crear múltiples tiendas
- * - Usuarios normales solo pueden crear una tienda
+ * Solo puede crear una tienda por usuario
  */
 export async function createStoreHandler(req, res, next) {
   try {
     const { name, state, store_id, instagram, tiktok, description, location, iva } = req.body;
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
 
-    // Validaciones básicas
     if (!name) {
       return res.status(400).json({
         success: false,
@@ -229,7 +233,6 @@ export async function createStoreHandler(req, res, next) {
       });
     }
 
-    // Validar formato de Instagram si se proporciona
     if (instagram && instagram.trim()) {
       const instagramRegex = /^[a-zA-Z0-9._]+$/;
       if (!instagramRegex.test(instagram.trim())) {
@@ -240,7 +243,6 @@ export async function createStoreHandler(req, res, next) {
       }
     }
 
-    // Validar formato de TikTok si se proporciona (mismo formato que Instagram)
     if (tiktok && tiktok.trim()) {
       const tiktokRegex = /^[a-zA-Z0-9._]+$/;
       if (!tiktokRegex.test(tiktok.trim())) {
@@ -251,20 +253,17 @@ export async function createStoreHandler(req, res, next) {
       }
     }
 
-    // Si no es admin, verificar que no tenga ya una tienda
-    if (!isAdmin) {
-      const hasStore = await userHasStoreAsCreator(userId);
-      if (hasStore) {
-        return res.status(403).json({
-          success: false,
-          error: 'Ya tienes una tienda creada. Los usuarios normales solo pueden tener una tienda.',
-        });
-      }
+    const [storeCount, storeLimit] = await Promise.all([
+      getUserStoreCountAsCreator(userId),
+      getUserStoreLimit(userId),
+    ]);
+    if (storeCount >= storeLimit) {
+      return res.status(403).json({
+        success: false,
+        error: `Has alcanzado el límite de tiendas permitidas (${storeLimit}). Contacta al soporte para aumentar tu plan.`,
+      });
     }
 
-    // Crear tienda usando el servicio
-    // Si es admin, crear solo la tienda sin registro en store_users
-    // Si no es admin, crear la tienda y el registro en store_users
     const store = await createStore(
       {
         name,
@@ -277,7 +276,7 @@ export async function createStoreHandler(req, res, next) {
         iva: iva != null ? parseFloat(iva) : undefined,
       },
       userId,
-      !isAdmin // Solo crear store_user si NO es admin
+      true
     );
 
     res.status(201).json({
@@ -291,16 +290,14 @@ export async function createStoreHandler(req, res, next) {
 
 /**
  * Agregar un usuario a una tienda por email
- * Solo el creador de la tienda o un admin pueden agregar usuarios
+ * Solo el creador de la tienda puede agregar usuarios
  */
 export async function addUserToStoreHandler(req, res, next) {
   try {
     const { id: storeId } = req.params;
     const { email, isCreator = false } = req.body;
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
 
-    // Validar que se proporcione el email
     if (!email || !email.trim()) {
       return res.status(400).json({
         success: false,
@@ -308,7 +305,6 @@ export async function addUserToStoreHandler(req, res, next) {
       });
     }
 
-    // Validar formato de email básico
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email.trim())) {
       return res.status(400).json({
@@ -317,15 +313,12 @@ export async function addUserToStoreHandler(req, res, next) {
       });
     }
 
-    // Verificar permisos: solo el creador de la tienda o un admin pueden agregar usuarios
-    if (!isAdmin) {
-      const userIsCreator = await isStoreCreator(storeId, userId);
-      if (!userIsCreator) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes permiso para agregar usuarios a esta tienda. Solo el creador de la tienda puede hacerlo.',
-        });
-      }
+    const userIsCreator = await isStoreCreator(storeId, userId);
+    if (!userIsCreator) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes permiso para agregar usuarios a esta tienda. Solo el creador de la tienda puede hacerlo.',
+      });
     }
 
     // Buscar el usuario por email
@@ -347,7 +340,12 @@ export async function addUserToStoreHandler(req, res, next) {
     }
 
     // Agregar el usuario a la tienda con el tipo especificado
-    const storeUser = await addUserToStore(storeId, user.id, isCreator === true || isCreator === 'true');
+    const isCreatorFlag = isCreator === true || isCreator === 'true';
+    const storeUser = await addUserToStore(storeId, user.id, isCreatorFlag);
+
+    if (storeUser.isCreator) {
+      await assignAllPermissionsToUser(storeId, user.id);
+    }
 
     res.status(201).json({
       success: true,
@@ -370,6 +368,46 @@ export async function addUserToStoreHandler(req, res, next) {
       });
     }
     if (error.message && error.message.includes('ya está agregado')) {
+      return res.status(400).json({
+        success: false,
+        error: error.message,
+      });
+    }
+    next(error);
+  }
+}
+
+/**
+ * Eliminar un usuario de una tienda
+ * Solo el creador de la tienda puede eliminar usuarios
+ */
+export async function removeUserFromStoreHandler(req, res, next) {
+  try {
+    const { id: storeId, userId: userIdToRemove } = req.params;
+    const currentUserId = req.user.id;
+
+    const userIsCreator = await isStoreCreator(storeId, currentUserId);
+    if (!userIsCreator) {
+      return res.status(403).json({
+        success: false,
+        error: 'Solo el creador de la tienda puede eliminar usuarios',
+      });
+    }
+
+    await removeUserFromStore(storeId, userIdToRemove);
+
+    res.json({
+      success: true,
+      message: 'Usuario eliminado de la tienda',
+    });
+  } catch (error) {
+    if (error.message === 'Tienda no encontrada' || error.message === 'El usuario no está en esta tienda') {
+      return res.status(404).json({
+        success: false,
+        error: error.message,
+      });
+    }
+    if (error.message === 'No puedes eliminar al único creador de la tienda') {
       return res.status(400).json({
         success: false,
         error: error.message,
@@ -465,16 +503,13 @@ export async function uploadStoreLogoHandler(req, res, next) {
   try {
     const { id: storeId } = req.params;
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
 
-    if (!isAdmin) {
-      const userIsCreator = await isStoreCreator(storeId, userId);
-      if (!userIsCreator) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes permiso para actualizar el logo. Solo el creador de la tienda o un admin pueden hacerlo.',
-        });
-      }
+    const userIsCreator = await isStoreCreator(storeId, userId);
+    if (!userIsCreator) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes permiso para actualizar el logo. Solo el creador de la tienda puede hacerlo.',
+      });
     }
 
     if (!req.file || !req.file.buffer) {
@@ -510,23 +545,19 @@ export async function uploadStoreLogoHandler(req, res, next) {
 
 /**
  * Obtener todos los usuarios de una tienda
- * Solo el creador de la tienda o un admin pueden ver la lista de usuarios
+ * Solo el creador de la tienda puede ver la lista de usuarios
  */
 export async function getStoreUsersHandler(req, res, next) {
   try {
     const { id: storeId } = req.params;
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
 
-    // Verificar permisos: solo el creador de la tienda o un admin pueden ver usuarios
-    if (!isAdmin) {
-      const userIsCreator = await isStoreCreator(storeId, userId);
-      if (!userIsCreator) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes permiso para ver los usuarios de esta tienda. Solo el creador de la tienda puede hacerlo.',
-        });
-      }
+    const userIsCreator = await isStoreCreator(storeId, userId);
+    if (!userIsCreator) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes permiso para ver los usuarios de esta tienda. Solo el creador de la tienda puede hacerlo.',
+      });
     }
 
     // Obtener usuarios de la tienda
@@ -538,13 +569,95 @@ export async function getStoreUsersHandler(req, res, next) {
       count: users.length,
     });
   } catch (error) {
-    // Manejar errores específicos
     if (error.message && error.message.includes('no encontrada')) {
       return res.status(404).json({
         success: false,
         error: error.message,
       });
     }
+    next(error);
+  }
+}
+
+/**
+ * GET /api/stores/:id/my-permissions
+ * Obtener los permisos del usuario actual en esta tienda
+ */
+export async function getMyPermissionsHandler(req, res, next) {
+  try {
+    const { id: storeId } = req.params;
+    const userId = req.user.id;
+
+    const userStore = await getUserStoreById(storeId, userId);
+    if (!userStore) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
+    }
+
+    const permissionCodes = await getUserPermissionCodesForStore(storeId, userId);
+    const creator = await isStoreCreator(storeId, userId);
+
+    res.json({
+      success: true,
+      permissionCodes,
+      isCreator: !!creator,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * PUT /api/stores/:id/users/:userId/permissions
+ * Asignar permisos a un usuario. Solo el creador de la tienda.
+ */
+export async function setUserPermissionsHandler(req, res, next) {
+  try {
+    const { id: storeId, userId: targetUserId } = req.params;
+    const currentUserId = req.user.id;
+    const { permissionCodes } = req.body;
+
+    const userIsCreator = await isStoreCreator(storeId, currentUserId);
+    if (!userIsCreator) {
+      return res.status(403).json({
+        success: false,
+        error: 'Solo el creador de la tienda puede asignar permisos',
+      });
+    }
+
+    const targetIsCreator = await isStoreCreator(storeId, targetUserId);
+    if (targetIsCreator) {
+      return res.status(400).json({
+        success: false,
+        error: 'El creador de la tienda tiene todos los permisos; no es necesario asignarlos',
+      });
+    }
+
+    await setUserPermissions(storeId, targetUserId, Array.isArray(permissionCodes) ? permissionCodes : []);
+
+    res.json({
+      success: true,
+      message: 'Permisos actualizados',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * GET /api/permissions
+ * Listar todos los permisos disponibles (catálogo)
+ */
+export async function getAllPermissionsHandler(req, res, next) {
+  try {
+    const permissions = await getAllPermissions();
+    res.json({
+      success: true,
+      permissions,
+    });
+  } catch (error) {
     next(error);
   }
 }

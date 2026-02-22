@@ -20,7 +20,6 @@ import { getUserStoreById } from '../services/storeService.js';
 export async function getSalesReportHandler(req, res, next) {
   try {
     const userId = req.user?.id;
-    const isAdmin = req.user?.role === 'admin';
     const { storeId, dateFrom, dateTo, groupByCategory, limit } = req.query;
 
     if (!storeId) {
@@ -30,14 +29,12 @@ export async function getSalesReportHandler(req, res, next) {
       });
     }
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const store = await getUserStoreById(storeId, userId);
+    if (!store) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     const report = await getSalesReport(storeId, {
@@ -63,7 +60,6 @@ export async function getSalesReportHandler(req, res, next) {
 export async function getUnsoldReportHandler(req, res, next) {
   try {
     const userId = req.user?.id;
-    const isAdmin = req.user?.role === 'admin';
     const { storeId, dateFrom, dateTo, onlyWithStock, limit } = req.query;
 
     if (!storeId) {
@@ -73,14 +69,12 @@ export async function getUnsoldReportHandler(req, res, next) {
       });
     }
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const store = await getUserStoreById(storeId, userId);
+    if (!store) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     const report = await getUnsoldReport(storeId, {
@@ -106,7 +100,6 @@ export async function getUnsoldReportHandler(req, res, next) {
 export async function getFullReportHandler(req, res, next) {
   try {
     const userId = req.user?.id;
-    const isAdmin = req.user?.role === 'admin';
     const { storeId, dateFrom, dateTo, limitSales, limitUnsold, onlyWithStock } = req.query;
 
     if (!storeId) {
@@ -116,14 +109,12 @@ export async function getFullReportHandler(req, res, next) {
       });
     }
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const store = await getUserStoreById(storeId, userId);
+    if (!store) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     const report = await getFullReport(storeId, {
@@ -150,7 +141,6 @@ export async function getFullReportHandler(req, res, next) {
 export async function getRevenueOverTimeHandler(req, res, next) {
   try {
     const userId = req.user?.id;
-    const isAdmin = req.user?.role === 'admin';
     const { storeId, dateFrom, dateTo, groupBy } = req.query;
 
     if (!storeId) {
@@ -160,14 +150,12 @@ export async function getRevenueOverTimeHandler(req, res, next) {
       });
     }
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const store = await getUserStoreById(storeId, userId);
+    if (!store) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     const data = await getRevenueOverTime(storeId, {
@@ -192,7 +180,6 @@ export async function getRevenueOverTimeHandler(req, res, next) {
 export async function getTopProductsHandler(req, res, next) {
   try {
     const userId = req.user?.id;
-    const isAdmin = req.user?.role === 'admin';
     const { storeId, dateFrom, dateTo, limit, sortBy } = req.query;
 
     if (!storeId) {
@@ -202,14 +189,12 @@ export async function getTopProductsHandler(req, res, next) {
       });
     }
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const store = await getUserStoreById(storeId, userId);
+    if (!store) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     const data = await getTopProducts(storeId, {
@@ -235,7 +220,6 @@ export async function getTopProductsHandler(req, res, next) {
 export async function getCancelledOrdersReportHandler(req, res, next) {
   try {
     const userId = req.user?.id;
-    const isAdmin = req.user?.role === 'admin';
     const { storeId, dateFrom, dateTo, limit } = req.query;
 
     if (!storeId) {
@@ -245,14 +229,12 @@ export async function getCancelledOrdersReportHandler(req, res, next) {
       });
     }
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const store = await getUserStoreById(storeId, userId);
+    if (!store) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     const report = await getCancelledOrdersReport(storeId, {

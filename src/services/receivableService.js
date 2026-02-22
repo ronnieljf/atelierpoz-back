@@ -297,7 +297,8 @@ export async function getReceivablesByStore(storeId, options = {}) {
       s.name as store_name,
       u_created.name as created_by_name, u_updated.name as updated_by_name,
       (SELECT COALESCE(jsonb_array_length(req.items), 0)::int FROM requests req WHERE req.id = r.request_id) AS items_count,
-      (SELECT req.order_number FROM requests req WHERE req.id = r.request_id) AS order_number
+      (SELECT req.order_number FROM requests req WHERE req.id = r.request_id) AS order_number,
+      COALESCE((SELECT SUM(rp.amount)::numeric FROM receivable_payments rp WHERE rp.receivable_id = r.id), 0)::float AS total_paid
     FROM receivables r
     LEFT JOIN stores s ON s.id = r.store_id
     LEFT JOIN users u_created ON u_created.id = r.created_by
@@ -317,7 +318,10 @@ export async function getReceivablesByStore(storeId, options = {}) {
 
   const result = await query(sql, params);
   return {
-    receivables: result.rows.map(formatReceivable),
+    receivables: result.rows.map((row) => ({
+      ...formatReceivable(row),
+      totalPaid: parseFloat(row.total_paid) || 0,
+    })),
     total,
     totalAmountByCurrency,
   };

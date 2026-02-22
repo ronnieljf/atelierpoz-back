@@ -12,18 +12,16 @@ import {
   deleteVendorHandler,
 } from '../controllers/vendorController.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { requirePermission } from '../middleware/permission.js';
 
 const router = express.Router();
+const storeIdQOrB = (req) => req.query.storeId || req.body?.storeId;
 
 router.use(authenticateToken);
 
-/** GET /api/vendors?storeId=&limit=&offset=&search= */
-router.get('/', getVendorsHandler);
+router.get('/', requirePermission('vendors.view', storeIdQOrB), getVendorsHandler);
+router.get('/:id', requirePermission('vendors.view', storeIdQOrB), getVendorHandler);
 
-/** GET /api/vendors/:id?storeId= */
-router.get('/:id', getVendorHandler);
-
-/** POST /api/vendors */
 const createValidation = [
   body('storeId').notEmpty().isUUID(),
   body('name').optional().trim().isLength({ max: 500 }),
@@ -33,9 +31,8 @@ const createValidation = [
   body('identityDocument').optional().trim().isLength({ max: 50 }),
   body('notes').optional().trim().isLength({ max: 2000 }),
 ];
-router.post('/', createValidation, createVendorHandler);
+router.post('/', requirePermission('vendors.create', storeIdQOrB), createValidation, createVendorHandler);
 
-/** PUT /api/vendors/:id */
 const updateValidation = [
   body('storeId').notEmpty().isUUID(),
   body('name').optional().trim().isLength({ max: 500 }),
@@ -45,9 +42,7 @@ const updateValidation = [
   body('identityDocument').optional().trim().isLength({ max: 50 }),
   body('notes').optional().trim().isLength({ max: 2000 }),
 ];
-router.put('/:id', updateValidation, updateVendorHandler);
-
-/** DELETE /api/vendors/:id?storeId= */
-router.delete('/:id', deleteVendorHandler);
+router.put('/:id', requirePermission('vendors.edit', storeIdQOrB), updateValidation, updateVendorHandler);
+router.delete('/:id', requirePermission('vendors.edit', storeIdQOrB), deleteVendorHandler);
 
 export default router;

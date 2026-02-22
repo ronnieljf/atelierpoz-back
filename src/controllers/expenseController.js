@@ -20,15 +20,12 @@ import { getUserStoreById } from '../services/storeService.js';
 export async function createExpenseHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { storeId, categoryId, vendorId, vendorName, vendorPhone, description, amount, currency, dueDate } = req.body;
 
     if (!storeId) return res.status(400).json({ success: false, error: 'storeId es requerido' });
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
-    }
+    const store = await getUserStoreById(storeId, userId);
+    if (!store) return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
 
     const amountNum = amount != null && amount !== '' ? parseFloat(amount) : NaN;
     if (Number.isNaN(amountNum) || amountNum < 0) {
@@ -60,15 +57,12 @@ export async function createExpenseHandler(req, res, next) {
 export async function getExpensesHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { storeId, status, categoryId, limit, offset } = req.query;
 
     if (!storeId) return res.status(400).json({ success: false, error: 'storeId es requerido' });
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
-    }
+    const store = await getUserStoreById(storeId, userId);
+    if (!store) return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
 
     const result = await getExpensesByStore(storeId, { status, categoryId, limit, offset });
     return res.json({ success: true, ...result });
@@ -83,15 +77,12 @@ export async function getExpensesHandler(req, res, next) {
 export async function getPendingTotalHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { storeId } = req.query;
 
     if (!storeId) return res.status(400).json({ success: false, error: 'storeId es requerido' });
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
-    }
+    const store = await getUserStoreById(storeId, userId);
+    if (!store) return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
 
     const totals = await getPendingTotalByStore(storeId);
     return res.json({ success: true, totals });
@@ -106,15 +97,12 @@ export async function getPendingTotalHandler(req, res, next) {
 export async function getExpenseByIdHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { storeId } = req.query;
 
     if (!storeId) return res.status(400).json({ success: false, error: 'storeId es requerido' });
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
-    }
+    const store = await getUserStoreById(storeId, userId);
+    if (!store) return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
 
     const expense = await getExpenseById(req.params.id, storeId);
     if (!expense) return res.status(404).json({ success: false, error: 'Gasto no encontrado' });
@@ -130,15 +118,12 @@ export async function getExpenseByIdHandler(req, res, next) {
 export async function updateExpenseHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { storeId, ...updates } = req.body;
 
     if (!storeId) return res.status(400).json({ success: false, error: 'storeId es requerido' });
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
-    }
+    const store = await getUserStoreById(storeId, userId);
+    if (!store) return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
 
     const expense = await updateExpense(req.params.id, storeId, updates, userId);
     if (!expense) return res.status(404).json({ success: false, error: 'Gasto no encontrado' });
@@ -166,15 +151,12 @@ export async function getExpensePaymentsHandler(req, res, next) {
 export async function createExpensePaymentHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { storeId, amount, currency, notes } = req.body;
 
     if (!storeId) return res.status(400).json({ success: false, error: 'storeId es requerido' });
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
-    }
+    const store = await getUserStoreById(storeId, userId);
+    if (!store) return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
 
     const amountNum = amount != null && amount !== '' ? parseFloat(amount) : NaN;
     if (Number.isNaN(amountNum) || amountNum <= 0) {

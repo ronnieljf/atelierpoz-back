@@ -27,7 +27,6 @@ import { query } from '../config/database.js';
 export async function createReceivableHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { storeId, customerName, customerPhone, description, amount, currency } = req.body;
 
     if (!storeId) {
@@ -37,14 +36,12 @@ export async function createReceivableHandler(req, res, next) {
       });
     }
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     const amountNum = amount != null && amount !== '' ? parseFloat(amount) : NaN;
@@ -99,7 +96,6 @@ export async function createReceivableHandler(req, res, next) {
 export async function createReceivableFromRequestHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { storeId, requestId, description, customerName, customerPhone, amount } = req.body;
 
     if (!storeId || !requestId) {
@@ -109,14 +105,12 @@ export async function createReceivableFromRequestHandler(req, res, next) {
       });
     }
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     const initialPayment =
@@ -177,7 +171,6 @@ export async function createReceivableFromRequestHandler(req, res, next) {
 export async function getReceivablesHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { storeId, status, limit, offset, dateFrom, dateTo, search } = req.query;
 
     if (!storeId) {
@@ -187,14 +180,12 @@ export async function getReceivablesHandler(req, res, next) {
       });
     }
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     const result = await getReceivablesByStore(storeId, {
@@ -224,7 +215,6 @@ export async function getReceivablesHandler(req, res, next) {
 export async function getPendingTotalHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { storeId } = req.query;
 
     if (!storeId) {
@@ -234,14 +224,12 @@ export async function getPendingTotalHandler(req, res, next) {
       });
     }
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     const result = await getPendingTotalByStore(storeId);
@@ -261,7 +249,6 @@ export async function getPendingTotalHandler(req, res, next) {
 export async function getReceivableByIdHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { id } = req.params;
     const { storeId } = req.query;
 
@@ -272,14 +259,12 @@ export async function getReceivableByIdHandler(req, res, next) {
       });
     }
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     const receivable = await getReceivableById(id, storeId);
@@ -306,18 +291,15 @@ export async function getReceivableByIdHandler(req, res, next) {
 export async function getReceivableLogsHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { id } = req.params;
     const { storeId } = req.query;
 
     if (!storeId) {
       return res.status(400).json({ success: false, error: 'storeId es requerido' });
     }
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
-      }
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
     }
 
     const logs = await getReceivablesLogs(id, storeId);
@@ -338,7 +320,6 @@ export async function getReceivableLogsHandler(req, res, next) {
 export async function updateReceivableHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { id } = req.params;
     const { storeId, ...updates } = req.body;
 
@@ -349,14 +330,12 @@ export async function updateReceivableHandler(req, res, next) {
       });
     }
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     const receivable = await updateReceivable(id, storeId, updates, req.user.id);
@@ -397,7 +376,6 @@ export async function updateReceivableHandler(req, res, next) {
 export async function updateReceivableItemsHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { id } = req.params;
     const { storeId, items, total } = req.body;
 
@@ -421,14 +399,12 @@ export async function updateReceivableItemsHandler(req, res, next) {
       });
     }
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     const result = await updateReceivableItems(id, storeId, items, totalNum, { updateAmount: true, updatedByUserId: req.user.id });
@@ -468,7 +444,6 @@ export async function updateReceivableItemsHandler(req, res, next) {
 export async function getReceivablePaymentsHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { id } = req.params;
     const { storeId } = req.query;
 
@@ -479,14 +454,12 @@ export async function getReceivablePaymentsHandler(req, res, next) {
       });
     }
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     const result = await getPaymentsByReceivableId(id, storeId);
@@ -515,7 +488,6 @@ export async function getReceivablePaymentsHandler(req, res, next) {
 export async function createReceivablePaymentHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { id } = req.params;
     const { storeId, amount, currency, notes } = req.body;
 
@@ -526,14 +498,12 @@ export async function createReceivablePaymentHandler(req, res, next) {
       });
     }
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     const result = await createReceivablePayment(id, storeId, {
@@ -618,7 +588,6 @@ async function buildProductDetailsForTemplate(receivables, storeId) {
 export async function sendReceivableRemindersHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { storeId, recipients } = req.body;
 
     if (!storeId) {
@@ -636,28 +605,13 @@ export async function sendReceivableRemindersHandler(req, res, next) {
     }
 
     const store = await getUserStoreById(storeId, userId);
-    if (!store && !isAdmin) {
+    if (!store) {
       return res.status(403).json({
         success: false,
         error: 'No tienes acceso a esta tienda',
       });
     }
-    if (!store && isAdmin) {
-      const { getStoreByIdPublic } = await import('../services/storeService.js');
-      const storePublic = await getStoreByIdPublic(storeId);
-      if (!storePublic) {
-        return res.status(404).json({
-          success: false,
-          error: 'Tienda no encontrada',
-        });
-      }
-      if (!storePublic.feature_send_reminder_receivables_whatsapp) {
-        return res.status(400).json({
-          success: false,
-          error: 'Esta tienda no tiene activo el envío de recordatorios por WhatsApp.',
-        });
-      }
-    } else if (store && !store.feature_send_reminder_receivables_whatsapp) {
+    if (!store.feature_send_reminder_receivables_whatsapp) {
       return res.status(400).json({
         success: false,
         error: 'Esta tienda no tiene activo el envío de recordatorios por WhatsApp.',
@@ -770,7 +724,6 @@ export async function sendReceivableRemindersHandler(req, res, next) {
 export async function bulkUpdateReceivableStatusHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { storeId, receivableIds, newStatus } = req.body;
 
     if (!storeId) {
@@ -795,21 +748,11 @@ export async function bulkUpdateReceivableStatusHandler(req, res, next) {
     }
 
     const store = await getUserStoreById(storeId, userId);
-    if (!store && !isAdmin) {
+    if (!store) {
       return res.status(403).json({
         success: false,
         error: 'No tienes acceso a esta tienda',
       });
-    }
-    if (!store && isAdmin) {
-      const { getStoreByIdPublic } = await import('../services/storeService.js');
-      const storePublic = await getStoreByIdPublic(storeId);
-      if (!storePublic) {
-        return res.status(404).json({
-          success: false,
-          error: 'Tienda no encontrada',
-        });
-      }
     }
 
     const receivables = await getReceivablesByIds(receivableIds, storeId);

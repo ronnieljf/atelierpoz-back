@@ -13,18 +13,15 @@ import { getUserStoreById } from '../services/storeService.js';
 
 async function checkStoreAccess(req, res) {
   const userId = req.user.id;
-  const isAdmin = req.user.role === 'admin';
   const storeId = req.query.storeId || req.body.storeId;
   if (!storeId) {
     res.status(400).json({ success: false, error: 'storeId es requerido' });
     return null;
   }
-  if (!isAdmin) {
-    const store = await getUserStoreById(storeId, userId);
-    if (!store) {
-      res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
-      return null;
-    }
+  const store = await getUserStoreById(storeId, userId);
+  if (!store) {
+    res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
+    return null;
   }
   return storeId;
 }

@@ -13,11 +13,9 @@ import {
   deleteProduct,
   getRecentProducts,
   setProductOutOfStock,
-  getAllProductsForAdmin,
   reorderProductsByStore,
   moveProductOrder,
 } from '../services/productService.js';
-import { getAllActiveStores } from '../services/storeService.js';
 import { getUserStoreById } from '../services/storeService.js';
 
 /**
@@ -108,31 +106,8 @@ export async function getProductPublicHandler(req, res, next) {
  */
 export async function getProductsAdminHandler(req, res, next) {
   try {
-    const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { storeId, categoryId, limit, offset, search, minPrice, maxPrice } = req.query;
 
-    // Si es admin, puede ver productos de todas las tiendas (storeId es opcional)
-    if (isAdmin) {
-      const result = await getAllProductsForAdmin({
-        storeId: storeId && storeId.trim() ? storeId.trim() : undefined,
-        categoryId: categoryId && categoryId.trim() ? categoryId.trim() : undefined,
-        search: search && String(search).trim() ? String(search).trim() : undefined,
-        minPrice: minPrice != null && minPrice !== '' ? parseFloat(minPrice) : undefined,
-        maxPrice: maxPrice != null && maxPrice !== '' ? parseFloat(maxPrice) : undefined,
-        limit: limit != null && limit !== '' ? parseInt(limit, 10) : 20,
-        offset: offset != null && offset !== '' ? Math.max(0, parseInt(offset, 10)) : 0,
-      });
-
-      return res.json({
-        success: true,
-        products: result.products,
-        count: result.products.length,
-        total: result.total,
-      });
-    }
-
-    // Si no es admin, requiere storeId
     if (!storeId) {
       return res.status(400).json({
         success: false,
@@ -166,29 +141,8 @@ export async function getProductsAdminHandler(req, res, next) {
  */
 export async function getProducts(req, res, next) {
   try {
-    const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { storeId, categoryId, limit, offset, search } = req.query;
 
-    // Si es admin, puede ver productos de todas las tiendas (storeId es opcional)
-    if (isAdmin) {
-      const result = await getAllProductsForAdmin({
-        storeId: storeId && storeId.trim() ? storeId.trim() : undefined,
-        categoryId: categoryId && categoryId.trim() ? categoryId.trim() : undefined,
-        search: search && String(search).trim() ? String(search).trim() : undefined,
-        limit: limit != null && limit !== '' ? parseInt(limit, 10) : 20,
-        offset: offset != null && offset !== '' ? Math.max(0, parseInt(offset, 10)) : 0,
-      });
-
-      return res.json({
-        success: true,
-        products: result.products,
-        count: result.products.length,
-        total: result.total,
-      });
-    }
-
-    // Si no es admin, requiere storeId
     if (!storeId) {
       return res.status(400).json({
         success: false,
@@ -253,7 +207,6 @@ export async function getProduct(req, res, next) {
 export async function createProductHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const {
       name,
       description,
@@ -274,7 +227,6 @@ export async function createProductHandler(req, res, next) {
       iva,
     } = req.body;
 
-    // Validaciones básicas (sku y precio opcionales; si no hay tienda el front envía la primera)
     if (!name || !categoryId || !storeId) {
       return res.status(400).json({
         success: false,
@@ -282,15 +234,12 @@ export async function createProductHandler(req, res, next) {
       });
     }
 
-    // Verificar que el usuario sea miembro de la tienda o admin
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     const basePriceNum = basePrice != null && basePrice !== '' ? parseFloat(basePrice) : 0;
@@ -348,7 +297,6 @@ export async function updateProductHandler(req, res, next) {
   try {
     const { id } = req.params;
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
     const { storeId, ...updates } = req.body;
 
     if (!storeId) {
@@ -358,15 +306,12 @@ export async function updateProductHandler(req, res, next) {
       });
     }
 
-    // Verificar que el usuario sea miembro de la tienda o admin
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     // Convertir campos del frontend a formato de base de datos
@@ -442,7 +387,6 @@ export async function deleteProductHandler(req, res, next) {
     const { id } = req.params;
     const { storeId } = req.query;
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
 
     if (!storeId) {
       return res.status(400).json({
@@ -451,15 +395,12 @@ export async function deleteProductHandler(req, res, next) {
       });
     }
 
-    // Verificar que el usuario sea miembro de la tienda o admin
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     const deleted = await deleteProduct(id, storeId);
@@ -489,7 +430,6 @@ export async function outStockHandler(req, res, next) {
     const { id } = req.params;
     const { storeId } = req.query;
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
 
     if (!storeId) {
       return res.status(400).json({
@@ -498,15 +438,12 @@ export async function outStockHandler(req, res, next) {
       });
     }
 
-    // Verificar que el usuario sea miembro de la tienda o admin
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     const product = await setProductOutOfStock(id, storeId);
@@ -544,7 +481,6 @@ export async function reorderProductsHandler(req, res, next) {
   try {
     const { storeId, productIds, productId, direction } = req.body;
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
 
     if (!storeId) {
       return res.status(400).json({
@@ -553,14 +489,12 @@ export async function reorderProductsHandler(req, res, next) {
       });
     }
 
-    if (!isAdmin) {
-      const store = await getUserStoreById(storeId, userId);
-      if (!store) {
-        return res.status(403).json({
-          success: false,
-          error: 'No tienes acceso a esta tienda',
-        });
-      }
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes acceso a esta tienda',
+      });
     }
 
     let updated = 0;

@@ -12,11 +12,10 @@ import {
   deleteCategory,
 } from '../services/categoryService.js';
 import { getUserStoreById } from '../services/storeService.js';
+import { hasPermission } from '../services/permissionService.js';
 
 function checkStoreAccess(req, storeId) {
   const userId = req.user?.id;
-  const isAdmin = req.user?.role === 'admin';
-  if (isAdmin) return Promise.resolve(true);
   if (!userId) return Promise.resolve(false);
   return getUserStoreById(storeId, userId).then((store) => !!store);
 }
@@ -152,6 +151,14 @@ export async function updateCategoryHandler(req, res, next) {
           error: 'No tienes acceso a esta categoría',
         });
       }
+      const canEdit = await hasPermission(existing.store_id, req.user.id, 'categories.edit');
+      if (!canEdit) {
+        return res.status(403).json({
+          success: false,
+          error: 'No tienes permiso para realizar esta acción',
+          code: 'PERMISSION_DENIED',
+        });
+      }
     } else {
       const isAdmin = req.user?.role === 'admin';
       if (!isAdmin) {
@@ -203,6 +210,14 @@ export async function deleteCategoryHandler(req, res, next) {
         return res.status(403).json({
           success: false,
           error: 'No tienes acceso a esta categoría',
+        });
+      }
+      const canEdit = await hasPermission(existing.store_id, req.user.id, 'categories.edit');
+      if (!canEdit) {
+        return res.status(403).json({
+          success: false,
+          error: 'No tienes permiso para realizar esta acción',
+          code: 'PERMISSION_DENIED',
         });
       }
     } else {

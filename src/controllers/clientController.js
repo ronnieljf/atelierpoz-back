@@ -13,8 +13,6 @@ import { getUserStoreById } from '../services/storeService.js';
 
 function checkStoreAccess(req, storeId) {
   const userId = req.user.id;
-  const isAdmin = req.user.role === 'admin';
-  if (isAdmin) return Promise.resolve(true);
   return getUserStoreById(storeId, userId).then((store) => !!store);
 }
 

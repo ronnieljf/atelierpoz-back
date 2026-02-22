@@ -139,66 +139,36 @@ export async function getStoreFeatureSendReminderReceivablesWhatsapp(identifier)
 }
 
 /**
- * Obtener todas las tiendas a las que pertenece un usuario
- * Para usuarios normales: solo tiendas donde es creador
- * Para admins: todas las tiendas activas
+ * Obtener todas las tiendas a las que pertenece un usuario (como creador o como miembro)
+ * Incluye tiendas donde el usuario está en store_users con cualquier rol
  * @param {string} userId - ID del usuario
- * @param {string} userRole - Rol del usuario ('admin' o 'user')
- * @returns {Promise<Array>} Array de tiendas con información adicional
+ * @returns {Promise<Array>} Array de tiendas con información adicional (is_creator indica si es creador)
  */
-export async function getUserStores(userId, userRole = 'user') {
-  let result;
-  if (userRole === 'admin') {
-    result = await query(
-      `SELECT 
-        s.id,
-        s.store_id,
-        s.name,
-        s.state,
-        s.logo,
-        s.instagram,
-        s.tiktok,
-        s.description,
-        s.location,
-        COALESCE(s.iva, 0) as iva,
-        COALESCE(s.feature_send_reminder_receivables_whatsapp, false) as feature_send_reminder_receivables_whatsapp,
-        s.created_at,
-        s.updated_at,
-        COALESCE(su.is_creator, false) as is_creator,
-        su.phone_number,
-        COALESCE(su.created_at, s.created_at) as joined_at
-      FROM stores s
-      LEFT JOIN store_users su ON s.id = su.store_id AND su.user_id = $1
-      WHERE s.state = 'active'
-      ORDER BY s.created_at DESC`,
-      [userId]
-    );
-  } else {
-    result = await query(
-      `SELECT 
-        s.id,
-        s.store_id,
-        s.name,
-        s.state,
-        s.logo,
-        s.instagram,
-        s.tiktok,
-        s.description,
-        s.location,
-        COALESCE(s.iva, 0) as iva,
-        COALESCE(s.feature_send_reminder_receivables_whatsapp, false) as feature_send_reminder_receivables_whatsapp,
-        s.created_at,
-        s.updated_at,
-        su.is_creator,
-        su.phone_number,
-        su.created_at as joined_at
-      FROM stores s
-      INNER JOIN store_users su ON s.id = su.store_id
-      WHERE su.user_id = $1 AND su.is_creator = true AND s.state = 'active'
-      ORDER BY s.created_at DESC`,
-      [userId]
-    );
-  }
+export async function getUserStores(userId) {
+  const result = await query(
+    `SELECT 
+      s.id,
+      s.store_id,
+      s.name,
+      s.state,
+      s.logo,
+      s.instagram,
+      s.tiktok,
+      s.description,
+      s.location,
+      COALESCE(s.iva, 0) as iva,
+      COALESCE(s.feature_send_reminder_receivables_whatsapp, false) as feature_send_reminder_receivables_whatsapp,
+      s.created_at,
+      s.updated_at,
+      su.is_creator,
+      su.phone_number,
+      su.created_at as joined_at
+    FROM stores s
+    INNER JOIN store_users su ON s.id = su.store_id
+    WHERE su.user_id = $1
+    ORDER BY su.is_creator DESC, (s.state = 'active') DESC, s.created_at DESC`,
+    [userId]
+  );
 
   return result.rows.map(store => ({
     id: store.id,
@@ -247,7 +217,7 @@ export async function getUserStoreById(storeId, userId) {
       su.created_at as joined_at
     FROM stores s
     INNER JOIN store_users su ON s.id = su.store_id
-    WHERE s.id = $1 AND su.user_id = $2 AND s.state = 'active'`,
+    WHERE s.id = $1 AND su.user_id = $2`,
     [storeId, userId]
   );
 
@@ -307,15 +277,38 @@ export async function getStoreNameAndPhone(storeId) {
  * @returns {Promise<boolean>} true si el usuario ya tiene una tienda como creador
  */
 export async function userHasStoreAsCreator(userId) {
+  const count = await getUserStoreCountAsCreator(userId);
+  return count > 0;
+}
+
+/**
+ * Obtener la cantidad de tiendas que un usuario ha creado
+ * @param {string} userId - ID del usuario
+ * @returns {Promise<number>} Cantidad de tiendas creadas
+ */
+export async function getUserStoreCountAsCreator(userId) {
   const result = await query(
     `SELECT COUNT(*) as count
      FROM stores s
      INNER JOIN store_users su ON s.id = su.store_id
-     WHERE su.user_id = $1 AND su.is_creator = true`,
+     WHERE su.user_id = $1 AND su.is_creator = true AND s.state = 'active'`,
     [userId]
   );
 
-  return parseInt(result.rows[0].count) > 0;
+  return parseInt(result.rows[0].count);
+}
+
+/**
+ * Obtener el límite de tiendas permitido para un usuario
+ * @param {string} userId - ID del usuario
+ * @returns {Promise<number>} Límite de tiendas
+ */
+export async function getUserStoreLimit(userId) {
+  const result = await query(
+    'SELECT number_stores FROM users WHERE id = $1',
+    [userId]
+  );
+  return result.rows.length > 0 ? (parseInt(result.rows[0].number_stores) || 1) : 1;
 }
 
 /**
@@ -689,6 +682,47 @@ export async function addUserToStore(storeId, userId, isCreator = false) {
 }
 
 /**
+ * Eliminar un usuario de una tienda
+ * Solo debe llamarse si el solicitante es creador de la tienda (validado en el controlador).
+ * No se puede eliminar al único creador de la tienda.
+ * @param {string} storeId - ID de la tienda
+ * @param {string} userIdToRemove - ID del usuario a eliminar de la tienda
+ * @returns {Promise<{ removed: boolean }>}
+ */
+export async function removeUserFromStore(storeId, userIdToRemove) {
+  const storeResult = await query('SELECT id FROM stores WHERE id = $1', [storeId]);
+  if (storeResult.rows.length === 0) {
+    throw new Error('Tienda no encontrada');
+  }
+
+  const userInStore = await query(
+    'SELECT is_creator FROM store_users WHERE store_id = $1 AND user_id = $2',
+    [storeId, userIdToRemove]
+  );
+  if (userInStore.rows.length === 0) {
+    throw new Error('El usuario no está en esta tienda');
+  }
+
+  const isCreatorToRemove = userInStore.rows[0].is_creator;
+  if (isCreatorToRemove) {
+    const creatorCount = await query(
+      'SELECT COUNT(*) as count FROM store_users WHERE store_id = $1 AND is_creator = true',
+      [storeId]
+    );
+    if (parseInt(creatorCount.rows[0].count) <= 1) {
+      throw new Error('No puedes eliminar al único creador de la tienda');
+    }
+  }
+
+  await query(
+    'DELETE FROM store_users WHERE store_id = $1 AND user_id = $2',
+    [storeId, userIdToRemove]
+  );
+
+  return { removed: true };
+}
+
+/**
  * Actualizar el número de teléfono de un usuario en una tienda
  * @param {string} storeId - ID de la tienda
  * @param {string} userId - ID del usuario
@@ -771,6 +805,20 @@ export async function getStoreUsers(storeId) {
     [storeId]
   );
 
+  // Permisos por usuario (solo no creadores; los creadores tienen todos implícitos)
+  const permResult = await query(
+    `SELECT sup.user_id, p.code
+     FROM store_user_permissions sup
+     INNER JOIN permissions p ON p.id = sup.permission_id
+     WHERE sup.store_id = $1`,
+    [storeId]
+  );
+  const permissionsByUser = {};
+  for (const row of permResult.rows) {
+    if (!permissionsByUser[row.user_id]) permissionsByUser[row.user_id] = [];
+    permissionsByUser[row.user_id].push(row.code);
+  }
+
   return result.rows.map(row => ({
     id: row.id,
     storeId: row.store_id,
@@ -778,10 +826,11 @@ export async function getStoreUsers(storeId) {
     isCreator: row.is_creator,
     phoneNumber: row.phone_number,
     createdAt: row.created_at,
-    updatedAt: null, // La tabla store_users no tiene updated_at
+    updatedAt: null,
     userEmail: row.email,
     userName: row.name,
     userRole: row.role,
+    permissionCodes: row.is_creator ? null : (permissionsByUser[row.user_id] || []),
   }));
 }
 

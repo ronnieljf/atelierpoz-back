@@ -12,7 +12,7 @@ const upload = multer({
   storage,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB máximo por archivo
-    files: 10, // Máximo 10 archivos a la vez
+    files: 45, // Máximo 45 archivos a la vez por producto
   },
   fileFilter: (req, file, cb) => {
     // Validar tipo de archivo
@@ -33,7 +33,7 @@ const upload = multer({
   },
 });
 
-export const uploadMiddleware = upload.array('files', 10);
+export const uploadMiddleware = upload.array('files', 45);
 
 /** Un solo archivo para logo de tienda (campo "logo") */
 export const uploadLogoMiddleware = upload.single('logo');
