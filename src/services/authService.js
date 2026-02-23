@@ -15,7 +15,7 @@ import { query } from '../config/database.js';
 export async function findUserByEmail(email) {
   const normalizedEmail = email.toLowerCase().trim();
   const result = await query(
-    'SELECT id, email, password_hash, name, role, number_stores FROM users WHERE email = $1',
+    'SELECT id, email, password_hash, name, role, number_stores, reminders_enabled, reminder_days_after_creation, reminder_days_after_last_payment, reminder_interval_days FROM users WHERE email = $1',
     [normalizedEmail]
   );
 
@@ -127,6 +127,10 @@ export async function authenticateUser(email, password) {
       name: user.name,
       role: user.role,
       number_stores: user.number_stores ?? 1,
+      reminders_enabled: Boolean(user.reminders_enabled),
+      reminder_days_after_creation: user.reminder_days_after_creation ?? 30,
+      reminder_days_after_last_payment: user.reminder_days_after_last_payment ?? 15,
+      reminder_interval_days: user.reminder_interval_days ?? 7,
     },
     token,
   };
@@ -139,7 +143,7 @@ export async function authenticateUser(email, password) {
  */
 export async function getUserById(userId) {
   const result = await query(
-    'SELECT id, email, name, role, number_stores, created_at, updated_at, last_login FROM users WHERE id = $1',
+    'SELECT id, email, name, role, number_stores, reminders_enabled, reminder_days_after_creation, reminder_days_after_last_payment, reminder_interval_days, created_at, updated_at, last_login FROM users WHERE id = $1',
     [userId]
   );
 
@@ -200,6 +204,10 @@ export function formatUserResponse(user) {
     ...(user.created_at && { created_at: user.created_at }),
     ...(user.updated_at && { updated_at: user.updated_at }),
     ...(user.last_login && { last_login: user.last_login }),
+    ...(user.reminders_enabled !== undefined && { reminders_enabled: Boolean(user.reminders_enabled) }),
+    ...(user.reminder_days_after_creation !== undefined && { reminder_days_after_creation: user.reminder_days_after_creation ?? 30 }),
+    ...(user.reminder_days_after_last_payment !== undefined && { reminder_days_after_last_payment: user.reminder_days_after_last_payment ?? 15 }),
+    ...(user.reminder_interval_days !== undefined && { reminder_interval_days: user.reminder_interval_days ?? 7 }),
   };
 }
 
@@ -325,4 +333,63 @@ export async function updateUser(userId, userData) {
   );
 
   return formatUserResponse(result.rows[0]);
+}
+
+/**
+ * Actualizar configuración de recordatorios del usuario (solo sus propios datos).
+ * @param {string} userId - ID del usuario
+ * @param {Object} data - reminders_enabled?, reminder_days_after_creation?, reminder_days_after_last_payment?, reminder_interval_days?
+ * @returns {Promise<Object>} Usuario con campos de recordatorios actualizados
+ */
+export async function updateUserReminderSettings(userId, data) {
+  const updates = [];
+  const values = [];
+  let paramIndex = 1;
+
+  if (data.reminders_enabled !== undefined) {
+    updates.push(`reminders_enabled = $${paramIndex}`);
+    values.push(Boolean(data.reminders_enabled));
+    paramIndex++;
+  }
+  if (data.reminder_days_after_creation !== undefined) {
+    const days = Math.max(1, Math.min(365, Number(data.reminder_days_after_creation) || 30));
+    updates.push(`reminder_days_after_creation = $${paramIndex}`);
+    values.push(days);
+    paramIndex++;
+  }
+  if (data.reminder_days_after_last_payment !== undefined) {
+    const days = Math.max(1, Math.min(365, Number(data.reminder_days_after_last_payment) || 15));
+    updates.push(`reminder_days_after_last_payment = $${paramIndex}`);
+    values.push(days);
+    paramIndex++;
+  }
+  if (data.reminder_interval_days !== undefined) {
+    const days = Math.max(1, Math.min(365, Number(data.reminder_interval_days) || 7));
+    updates.push(`reminder_interval_days = $${paramIndex}`);
+    values.push(days);
+    paramIndex++;
+  }
+
+  const defaultReturn = (user) =>
+    user
+      ? {
+          reminders_enabled: Boolean(user.reminders_enabled),
+          reminder_days_after_creation: user.reminder_days_after_creation ?? 30,
+          reminder_days_after_last_payment: user.reminder_days_after_last_payment ?? 15,
+          reminder_interval_days: user.reminder_interval_days ?? 7,
+        }
+      : null;
+
+  if (updates.length === 0) {
+    const user = await getUserById(userId);
+    return defaultReturn(user);
+  }
+
+  values.push(userId);
+  await query(
+    `UPDATE users SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = $${paramIndex}`,
+    values
+  );
+  const user = await getUserById(userId);
+  return defaultReturn(user);
 }

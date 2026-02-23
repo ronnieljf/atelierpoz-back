@@ -11,11 +11,12 @@
 export function getMetaAuthUrl(redirectUri, state) {
   const appId = process.env.META_APP_ID || '898273202701987';
   const scopes = [
-    'instagram_basic',
-    'instagram_content_publish',
     'pages_show_list',
+    'pages_read_user_content', // requerido por instagram_basic
     'pages_read_engagement',
     'pages_manage_posts',
+    'instagram_basic',
+    'instagram_content_publish',
   ].join(',');
 
   const params = new URLSearchParams({
@@ -192,6 +193,74 @@ export async function createMediaContainer(imageUrl, caption, instagramAccountId
 }
 
 /**
+ * Crear un ítem de carrusel (una imagen sin caption; el caption va en el contenedor del carrusel)
+ * @param {string} imageUrl - URL pública de la imagen
+ * @param {string} instagramAccountId - ID de la cuenta de Instagram Business
+ * @param {string} accessToken - Token de acceso de la página
+ * @returns {Promise<string>} ID del contenedor del ítem
+ */
+export async function createCarouselItemContainer(imageUrl, instagramAccountId, accessToken) {
+  const params = new URLSearchParams({
+    image_url: imageUrl,
+    is_carousel_item: 'true',
+    access_token: accessToken,
+  });
+
+  const response = await fetch(
+    `https://graph.facebook.com/v21.0/${instagramAccountId}/media?${params.toString()}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(`Error al crear ítem de carrusel: ${error.error?.message || 'Error desconocido'}`);
+  }
+
+  const data = await response.json();
+  return data.id;
+}
+
+/**
+ * Crear contenedor de carrusel (agrupa varios ítems y el caption)
+ * @param {string[]} childrenIds - IDs de los contenedores de cada ítem (orden)
+ * @param {string} caption - Caption del post
+ * @param {string} instagramAccountId - ID de la cuenta de Instagram Business
+ * @param {string} accessToken - Token de acceso de la página
+ * @returns {Promise<string>} ID del contenedor del carrusel
+ */
+export async function createCarouselContainer(childrenIds, caption, instagramAccountId, accessToken) {
+  const params = new URLSearchParams({
+    media_type: 'CAROUSEL',
+    children: childrenIds.join(','),
+    caption: caption || '',
+    access_token: accessToken,
+  });
+
+  const response = await fetch(
+    `https://graph.facebook.com/v21.0/${instagramAccountId}/media?${params.toString()}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(`Error al crear carrusel: ${error.error?.message || 'Error desconocido'}`);
+  }
+
+  const data = await response.json();
+  return data.id;
+}
+
+/**
  * Publicar contenido en Instagram
  * @param {string} creationId - ID del contenedor de media creado
  * @param {string} instagramAccountId - ID de la cuenta de Instagram Business
@@ -223,24 +292,47 @@ export async function publishToInstagram(creationId, instagramAccountId, accessT
 }
 
 /**
- * Publicar un post completo en Instagram
+ * Publicar un post completo en Instagram (una imagen o carrusel con todas las seleccionadas)
  * @param {Object} postData - Datos del post
- * @param {string} postData.imageUrl - URL pública de la imagen
+ * @param {string} [postData.imageUrl] - URL pública de una sola imagen (compatibilidad)
+ * @param {string[]} [postData.imageUrls] - URLs públicas de las imágenes (todas las seleccionadas)
  * @param {string} postData.caption - Caption del post (puede incluir hashtags)
  * @param {string} instagramAccountId - ID de la cuenta de Instagram Business
  * @param {string} accessToken - Token de acceso de la página
  * @returns {Promise<Object>} Objeto con el ID del post publicado en Instagram
  */
 export async function publishPostToInstagram(postData, instagramAccountId, accessToken) {
-  const { imageUrl, caption } = postData;
+  const { imageUrl, imageUrls, caption } = postData;
+  const urls = Array.isArray(imageUrls) && imageUrls.length > 0
+    ? imageUrls
+    : imageUrl
+      ? [imageUrl]
+      : [];
 
-  // Paso 1: Crear contenedor de media
-  const creationId = await createMediaContainer(imageUrl, caption, instagramAccountId, accessToken);
+  if (urls.length === 0) {
+    throw new Error('Se necesita al menos una imagen para publicar en Instagram');
+  }
 
-  // Paso 2: Esperar un momento para que Instagram procese el contenedor
+  let creationId;
+
+  if (urls.length === 1) {
+    // Una sola imagen: flujo actual
+    creationId = await createMediaContainer(urls[0], caption || '', instagramAccountId, accessToken);
+  } else {
+    // Carrusel: crear un ítem por imagen, luego el contenedor del carrusel
+    const childrenIds = [];
+    for (const url of urls) {
+      const id = await createCarouselItemContainer(url, instagramAccountId, accessToken);
+      childrenIds.push(id);
+      // Pequeña pausa para que Instagram procese cada ítem
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    creationId = await createCarouselContainer(childrenIds, caption || '', instagramAccountId, accessToken);
+  }
+
+  // Esperar a que Instagram procese el contenedor
   await new Promise(resolve => setTimeout(resolve, 2000));
 
-  // Paso 3: Publicar el contenido
   const result = await publishToInstagram(creationId, instagramAccountId, accessToken);
 
   return {

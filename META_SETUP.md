@@ -22,11 +22,12 @@ Esta guía explica cómo configurar la integración con Meta/Instagram para publ
    - **Valid OAuth Redirect URIs**: Agrega `http://localhost:3001/api/meta/callback` (desarrollo) y tu URL de producción
    - **Deauthorize Callback URL**: Agrega la misma URL
 6. Solicita los siguientes permisos:
-   - `instagram_basic`
-   - `instagram_content_publish`
    - `pages_show_list`
+   - `pages_read_user_content` (requerido por instagram_basic)
    - `pages_read_engagement`
    - `pages_manage_posts`
+   - `instagram_basic`
+   - `instagram_content_publish`
 
 ## Variables de Entorno
 

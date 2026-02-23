@@ -846,6 +846,32 @@ export async function deleteReceivablePayment(receivableId, paymentId, storeId, 
 }
 
 /**
+ * Obtener cuentas pendientes de una tienda con fecha de creación y fecha de último abono (para recordatorios).
+ * last_payment_date = MAX(receivable_payments.created_at)::date o created_at de la cuenta si no hay abonos.
+ * @param {string} storeId - UUID de la tienda
+ * @returns {Promise<Array<{ id, store_id, created_at, last_payment_date }>>}
+ */
+export async function getPendingReceivablesWithReferenceDates(storeId) {
+  const result = await query(
+    `SELECT r.id, r.store_id, r.created_at,
+      COALESCE(
+        (SELECT MAX(rp.created_at)::date FROM receivable_payments rp WHERE rp.receivable_id = r.id),
+        r.created_at::date
+      ) AS last_payment_date
+     FROM receivables r
+     WHERE r.store_id = $1 AND r.status = 'pending'
+     ORDER BY r.created_at ASC`,
+    [storeId]
+  );
+  return result.rows.map((row) => ({
+    id: row.id,
+    store_id: row.store_id,
+    created_at: row.created_at,
+    last_payment_date: row.last_payment_date,
+  }));
+}
+
+/**
  * Obtener logs de una cuenta por cobrar (trazabilidad)
  */
 export async function getReceivablesLogs(receivableId, storeId) {

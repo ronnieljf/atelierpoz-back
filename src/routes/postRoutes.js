@@ -10,6 +10,7 @@ import {
   createPostHandler,
   updatePostHandler,
   deletePostHandler,
+  publishPostHandler,
 } from '../controllers/postController.js';
 
 const router = express.Router();
@@ -36,6 +37,12 @@ router.get('/:id', getPostByIdHandler);
  * Crear un nuevo post
  */
 router.post('/', createPostHandler);
+
+/**
+ * POST /api/posts/:id/publish
+ * Publicar el post en Instagram (requiere cuenta conectada)
+ */
+router.post('/:id/publish', publishPostHandler);
 
 /**
  * PUT /api/posts/:id

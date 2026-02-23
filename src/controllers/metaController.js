@@ -7,6 +7,12 @@ import * as metaIntegrationService from '../services/metaIntegrationService.js';
 import { query } from '../config/database.js';
 import crypto from 'node:crypto';
 
+/** Base URL del backend sin /api al final (evita duplicar /api en redirect_uri) */
+function getBackendBaseUrl() {
+  const url = process.env.BACKEND_URL || 'http://localhost:3001';
+  return url.replace(/\/api\/?$/, '');
+}
+
 /**
  * Iniciar flujo de autorización OAuth de Meta
  */
@@ -20,7 +26,7 @@ export async function initiateAuthHandler(req, res, next) {
     const stateData = `${userId}:${randomBytes}`;
     const state = Buffer.from(stateData).toString('base64');
     
-    const redirectUri = `${process.env.BACKEND_URL || 'http://localhost:3001'}/api/meta/callback`;
+    const redirectUri = `${getBackendBaseUrl()}/api/meta/callback`;
     const authUrl = metaService.getMetaAuthUrl(redirectUri, state);
     
     res.json({
@@ -72,7 +78,7 @@ export async function callbackHandler(req, res, next) {
       );
     }
     
-    const redirectUri = `${process.env.BACKEND_URL || 'http://localhost:3001'}/api/meta/callback`;
+    const redirectUri = `${getBackendBaseUrl()}/api/meta/callback`;
     
     // Intercambiar código por token
     const tokenData = await metaService.exchangeCodeForToken(code, redirectUri);

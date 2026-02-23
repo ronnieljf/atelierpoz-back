@@ -14,10 +14,8 @@ router.get('/auth/initiate', authenticateToken, metaController.initiateAuthHandl
 // Callback de OAuth - no requiere autenticación (Meta redirige aquí)
 router.get('/callback', metaController.callbackHandler);
 
-// Obtener estado de la integración
-router.get('/status', metaController.getIntegrationStatusHandler);
-
-// Desconectar integración
-router.delete('/disconnect', metaController.disconnectHandler);
+// Las siguientes rutas requieren autenticación
+router.get('/status', authenticateToken, metaController.getIntegrationStatusHandler);
+router.delete('/disconnect', authenticateToken, metaController.disconnectHandler);
 
 export default router;

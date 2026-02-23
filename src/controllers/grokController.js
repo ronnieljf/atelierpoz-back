@@ -45,14 +45,40 @@ Reglas estrictas:
 Responde ÚNICAMENTE con la descripción corta, nada más.`;
   }
   if (type === 'hashtags') {
-    return 'Eres un experto en marketing digital y SEO para redes sociales. Genera hashtags relevantes, populares y estratégicos para posts de Instagram y Facebook. Los hashtags deben ser:\n- Relevantes al tipo de producto presentado\n- Populares y utilizados frecuentemente en redes sociales\n- Entre 10-15 hashtags\n- Mezcla de hashtags generales y específicos\n- Sin el símbolo # (solo el texto del hashtag)\n- Separados por espacios\n- Adaptados al tipo de producto\n\nResponde SOLO con los hashtags separados por espacios, sin el símbolo #, sin explicaciones adicionales.';
+    return 'Eres un experto en marketing para Instagram. Genera hashtags para el producto.\n- Máximo 5 hashtags. Palabras CORTAS (ej: moda, estilo, look, belleza, oferta).\n- Sin el símbolo #. Solo el texto, separados por UN espacio. Sin saltos de línea.\n- Una sola línea: palabra1 palabra2 palabra3 palabra4 palabra5.\n\nResponde SOLO con los hashtags en una línea, separados por espacios, sin #, sin explicaciones.';
+  }
+  // Título para post de Instagram: muy corto, llamativo, sin precios
+  if (type === 'instagram_title') {
+    return `Eres un copywriter para Instagram. Genera el TÍTULO de un post para productos.
+
+Reglas estrictas:
+- Muy corto y llamativo: máximo 40-50 caracteres. Que enganche al instante.
+- Sin precios ni números. Solo algo impactante, elegante o curioso.
+- Sin emojis. Sin hashtags. Sin comillas. Sin puntos finales.
+- Idioma: el mismo que use el usuario (normalmente español).
+
+Responde ÚNICAMENTE con el título, nada más.`;
+  }
+  // Descripción para post de Instagram: corta, llamativa, sin precios
+  if (type === 'instagram_description') {
+    return `Eres un copywriter para Instagram. Genera la DESCRIPCIÓN (caption) corta de un post de productos.
+
+Reglas:
+- Corta: 1-2 frases, máximo 80-120 caracteres. Algo llamativo que invite a ver más.
+- Sin precios ni montos. Destaca estilo, sensación o beneficio, no números.
+- Puedes usar 1 emoji si encaja. Tono cercano y atractivo.
+- Sin hashtags en el texto (van aparte). Sin "¡Compra ya!" ni mensajes largos.
+- Idioma: el mismo que use el usuario (normalmente español).
+
+Responde ÚNICAMENTE con la descripción corta, nada más.`;
   }
   return '';
 }
 
 function getMaxTokens(type) {
-  if (type === 'title') return 80;
-  if (type === 'hashtags') return 200;
+  if (type === 'title' || type === 'instagram_title') return 60;
+  if (type === 'hashtags') return 80;
+  if (type === 'instagram_description') return 150;
   return 400;
 }
 
@@ -79,7 +105,7 @@ export async function generateHandler(req, res) {
 
     const systemPrompt = getSystemPrompt(type || 'description');
     if (!systemPrompt) {
-      return res.status(400).json({ error: 'Tipo no válido (title, description, hashtags)' });
+      return res.status(400).json({ error: 'Tipo no válido (title, description, hashtags, instagram_title, instagram_description)' });
     }
 
     let lastError = null;

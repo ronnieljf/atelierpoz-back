@@ -165,6 +165,78 @@ async function maybeResizeImage(buffer, originalName, mimeType) {
 }
 
 /**
+ * Subir un buffer directamente a R2 (sin redimensionar ni cambiar formato).
+ * Útil para imágenes ya procesadas (ej. formato Instagram).
+ *
+ * @param {Buffer} buffer - Buffer del archivo
+ * @param {string} mimeType - Tipo MIME (ej. 'image/jpeg')
+ * @param {string} folder - Carpeta donde guardar (opcional)
+ * @param {string} extension - Extensión del archivo (ej. '.jpg')
+ * @returns {Promise<{url: string, key: string}>}
+ */
+export async function uploadBuffer(buffer, mimeType, folder = '', extension = '.jpg') {
+  const fileName = generateFileName(`instagram${extension}`, folder);
+  const command = new PutObjectCommand({
+    Bucket: BUCKET_NAME,
+    Key: fileName,
+    Body: buffer,
+    ContentType: mimeType,
+  });
+  await s3Client.send(command);
+  const fileUrl = await generateFileUrl(fileName);
+  return { url: fileUrl, key: fileName };
+}
+
+/**
+ * Descarga una imagen desde una URL, la ajusta al formato 4:5 de Instagram (1080x1350)
+ * con padding blanco para que no se recorte, y la sube a R2.
+ * Evita que Instagram recorte la imagen por no cumplir relación de aspecto.
+ *
+ * @param {string} imageUrl - URL pública de la imagen
+ * @returns {Promise<string>} URL pública de la imagen procesada en R2
+ */
+export async function fitAndUploadForInstagram(imageUrl) {
+  const sharp = getSharp();
+  if (!sharp) {
+    console.warn('[instagram:fit] Sharp no disponible, se usará la URL original');
+    return imageUrl;
+  }
+
+  const res = await fetch(imageUrl, { signal: AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error(`No se pudo descargar la imagen: ${res.status}`);
+  const contentType = res.headers.get('content-type') || 'image/jpeg';
+  const buffer = Buffer.from(await res.arrayBuffer());
+
+  const TARGET_W = 1080;
+  const TARGET_H = 1350; // 4:5
+
+  const resized = await sharp(buffer)
+    .resize(TARGET_W, TARGET_H, { fit: 'contain' })
+    .toBuffer();
+  const meta = await sharp(resized).metadata();
+  const w = meta.width || TARGET_W;
+  const h = meta.height || TARGET_H;
+  const padTop = Math.floor((TARGET_H - h) / 2);
+  const padBottom = TARGET_H - h - padTop;
+  const padLeft = Math.floor((TARGET_W - w) / 2);
+  const padRight = TARGET_W - w - padLeft;
+
+  const padded = await sharp(resized)
+    .extend({
+      top: padTop,
+      bottom: padBottom,
+      left: padLeft,
+      right: padRight,
+      background: { r: 255, g: 255, b: 255, alpha: 1 },
+    })
+    .jpeg({ quality: 90 })
+    .toBuffer();
+
+  const { url } = await uploadBuffer(padded, 'image/jpeg', 'instagram', '.jpg');
+  return url;
+}
+
+/**
  * Subir un archivo a R2.
  * Si es una imagen y supera MAX_IMAGE_SIZE_BYTES, se redimensiona y comprime a WebP antes de subir.
  *

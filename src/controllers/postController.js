@@ -3,8 +3,29 @@
  */
 
 import * as postService from '../services/postService.js';
+
+/** Normaliza hashtags: máx 5, cortos, sin saltos de línea. Devuelve array con # (ej: ["#moda", "#estilo"]). */
+function normalizeHashtags(hashtags) {
+  if (Array.isArray(hashtags)) {
+    return hashtags
+      .slice(0, 5)
+      .map((t) => String(t).replace(/^#/, '').trim().slice(0, 30))
+      .filter(Boolean)
+      .map((t) => (t.startsWith('#') ? t : `#${t}`));
+  }
+  if (typeof hashtags !== 'string') return [];
+  const tags = hashtags
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .map((t) => t.replace(/^#/, '').trim().slice(0, 30))
+    .filter(Boolean);
+  return tags.slice(0, 5).map((t) => `#${t}`);
+}
 import * as metaService from '../services/metaService.js';
 import * as metaIntegrationService from '../services/metaIntegrationService.js';
+import * as storeService from '../services/storeService.js';
+import * as uploadService from '../services/uploadService.js';
 import { query } from '../config/database.js';
 
 /**
@@ -17,19 +38,14 @@ export async function getPostsHandler(req, res, next) {
     
     let posts;
     if (storeId) {
-      posts = await postService.getPostsByStore(storeId);
-      // Verificar que la tienda pertenezca al usuario
-      const storeResult = await query(
-        'SELECT id FROM stores WHERE id = $1 AND created_by = $2',
-        [storeId, userId]
-      );
-      
-      if (storeResult.rows.length === 0) {
+      const store = await storeService.getUserStoreById(storeId, userId);
+      if (!store) {
         return res.status(403).json({
           success: false,
           error: 'No tienes acceso a esta tienda',
         });
       }
+      posts = await postService.getPostsByStore(storeId);
     } else {
       posts = await postService.getPostsByUser(userId);
     }
@@ -99,47 +115,31 @@ export async function createPostHandler(req, res, next) {
       });
     }
     
-    // Validar que la tienda pertenezca al usuario si se proporciona
+    // Validar que la tienda pertenezca al usuario (vía store_users, no solo created_by)
     let finalStoreId = storeId;
     if (storeId) {
-      const storeResult = await query(
-        'SELECT id FROM stores WHERE id = $1 AND created_by = $2',
-        [storeId, userId]
-      );
-      
-      if (storeResult.rows.length === 0) {
+      const store = await storeService.getUserStoreById(storeId, userId);
+      if (!store) {
         return res.status(403).json({
           success: false,
           error: 'No tienes acceso a esta tienda',
         });
       }
     } else {
-      // Si no se proporciona storeId, usar la primera tienda del usuario
-      const storeResult = await query(
-        'SELECT id FROM stores WHERE created_by = $1 LIMIT 1',
-        [userId]
-      );
-      
-      if (storeResult.rows.length === 0) {
+      const userStores = await storeService.getUserStores(userId);
+      const activeStores = userStores.filter(s => s.state === 'active');
+      if (activeStores.length === 0) {
         return res.status(400).json({
           success: false,
           error: 'Debes tener al menos una tienda para crear posts',
         });
       }
-      
-      finalStoreId = storeResult.rows[0].id;
+      finalStoreId = activeStores[0].id;
     }
     
-    // Procesar hashtags
-    const hashtagsArray = Array.isArray(hashtags)
-      ? hashtags
-      : typeof hashtags === 'string'
-      ? hashtags.split(' ').filter(tag => tag.trim()).map(tag => {
-          const trimmed = tag.trim();
-          return trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
-        })
-      : [];
-    
+    // Procesar hashtags: máx 5, cortos, sin saltos de línea
+    const hashtagsArray = normalizeHashtags(hashtags);
+
     const postData = {
       title: title.trim(),
       description: description?.trim() || null,
@@ -183,17 +183,10 @@ export async function updatePostHandler(req, res, next) {
       });
     }
     
-    // Procesar hashtags si se proporcionan
+    // Procesar hashtags: máx 5, cortos, sin saltos de línea
     let hashtagsArray = existingPost.hashtags;
     if (hashtags !== undefined) {
-      hashtagsArray = Array.isArray(hashtags)
-        ? hashtags
-        : typeof hashtags === 'string'
-        ? hashtags.split(' ').filter(tag => tag.trim()).map(tag => {
-            const trimmed = tag.trim();
-            return trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
-          })
-        : [];
+      hashtagsArray = normalizeHashtags(hashtags);
     }
     
     const postData = {};
@@ -247,6 +240,104 @@ export async function deletePostHandler(req, res, next) {
     res.json({
       success: true,
       message: 'Post eliminado exitosamente',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Publicar un post en Instagram
+ * POST /api/posts/:id/publish
+ */
+export async function publishPostHandler(req, res, next) {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    const post = await postService.getPostById(id, userId);
+    if (!post) {
+      return res.status(404).json({
+        success: false,
+        error: 'Post no encontrado',
+      });
+    }
+
+    if (post.status === 'published') {
+      return res.status(400).json({
+        success: false,
+        error: 'Este post ya fue publicado en Instagram',
+      });
+    }
+
+    if (!post.images || post.images.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'El post debe tener al menos una imagen para publicar en Instagram',
+      });
+    }
+
+    const imageUrls = post.images.filter(
+      (img) => typeof img === 'string' && (img.startsWith('http://') || img.startsWith('https://'))
+    );
+    if (imageUrls.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Las imágenes del post deben ser URLs públicas (https). Las imágenes en base64 no pueden publicarse en Instagram. Sube imágenes desde la tienda que usen almacenamiento en la nube (R2).',
+      });
+    }
+
+    const integration = await metaIntegrationService.getMetaIntegrationByUser(userId);
+    if (!integration) {
+      return res.status(400).json({
+        success: false,
+        error: 'Conecta tu cuenta de Instagram primero desde la sección de arriba',
+      });
+    }
+
+    if (integration.expiresAt && new Date(integration.expiresAt) < new Date()) {
+      return res.status(400).json({
+        success: false,
+        error: 'La conexión con Instagram ha expirado. Desconecta y vuelve a conectar tu cuenta',
+      });
+    }
+
+    const captionParts = [
+      post.title,
+      post.description || '',
+      Array.isArray(post.hashtags) ? post.hashtags.join(' ') : (post.hashtags || ''),
+    ].filter(Boolean);
+    const caption = captionParts.join('\n\n').trim().slice(0, 2200);
+
+    // Ajustar cada imagen al formato 4:5 de Instagram (1080x1350) con padding para evitar recortes
+    const imageUrlsForInstagram = [];
+    for (const url of imageUrls) {
+      try {
+        const fittedUrl = await uploadService.fitAndUploadForInstagram(url);
+        imageUrlsForInstagram.push(fittedUrl);
+      } catch (err) {
+        console.warn('[posts:publish] No se pudo ajustar imagen para Instagram, se usa original:', err?.message || err);
+        imageUrlsForInstagram.push(url);
+      }
+    }
+
+    const result = await metaService.publishPostToInstagram(
+      {
+        imageUrls: imageUrlsForInstagram,
+        caption: caption || post.title,
+      },
+      integration.instagramAccountId,
+      integration.accessToken
+    );
+
+    await postService.updatePost(id, { status: 'published' }, userId);
+
+    res.json({
+      success: true,
+      message: 'Post publicado en Instagram correctamente',
+      data: {
+        instagramMediaId: result.instagramMediaId,
+      },
     });
   } catch (error) {
     next(error);

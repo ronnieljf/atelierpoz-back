@@ -25,7 +25,10 @@ import financeCategoryRoutes from './routes/financeCategoryRoutes.js';
 import vendorRoutes from './routes/vendorRoutes.js';
 import purchaseRoutes from './routes/purchaseRoutes.js';
 import webhookRoutes from './routes/webhookRoutes.js';
+import reminderRoutes from './routes/reminderRoutes.js';
+import cron from 'node-cron';
 import { flowPost } from './controllers/flowController.js';
+import { runReceivableRemindersJob } from './services/reminderService.js';
 
 // Cargar variables de entorno
 dotenv.config();
@@ -71,6 +74,7 @@ app.use('/api/finance-categories', financeCategoryRoutes);
 app.use('/api/vendors', vendorRoutes);
 app.use('/api/purchases', purchaseRoutes);
 app.use('/api/webhooks', webhookRoutes);
+app.use('/api/reminders', reminderRoutes);
 
 /** POST /api/flow — WhatsApp Flow data exchange (payload cifrado; respuesta cifrada). */
 app.post('/api/flow', flowPost);
@@ -86,7 +90,27 @@ app.use((req, res) => {
 // Error handler (debe ir al final)
 app.use(errorHandler);
 
+// Job de recordatorios con node-cron (ej: "0 9 * * *" = diario a las 9:00)
+const REMINDER_JOB_CRON = process.env.REMINDER_JOB_CRON || '0 9 * * *';
+
+function runReminderJob() {
+  runReceivableRemindersJob()
+    .then((result) => {
+      console.log(`[Recordatorios] Job ejecutado: ${result.remindersCreated} recordatorios, ${result.whatsappSent} WhatsApp enviados, ${result.usersProcessed} usuarios`);
+    })
+    .catch((err) => {
+      console.error('[Recordatorios] Error en job:', err?.message || err);
+    });
+}
+
 // Iniciar servidor
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  runReminderJob();
+  if (cron.validate(REMINDER_JOB_CRON)) {
+    cron.schedule(REMINDER_JOB_CRON, runReminderJob);
+    console.log(`[Recordatorios] Cron programado: ${REMINDER_JOB_CRON}`);
+  } else {
+    console.warn(`[Recordatorios] Cron inválido "${REMINDER_JOB_CRON}", job no programado. Usa REMINDER_JOB_CRON (ej: 0 9 * * *).`);
+  }
 });
