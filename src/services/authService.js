@@ -5,7 +5,9 @@
 
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { query } from '../config/database.js';
+import { sendVerificationCode, sendPasswordResetCode } from './emailService.js';
 
 /**
  * Buscar usuario por email
@@ -186,6 +188,204 @@ export async function changePasswordForUser(userId, currentPassword, newPassword
   await query(
     'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
     [passwordHash, userId]
+  );
+}
+
+/**
+ * Genera un código de 6 dígitos
+ */
+function generateVerificationCode() {
+  return crypto.randomInt(100000, 999999).toString();
+}
+
+/**
+ * Registro: solicitar código de verificación por email.
+ * No crea el usuario hasta que se verifique el email.
+ * @param {string} email - Email del usuario
+ * @param {string} name - Nombre (opcional)
+ * @param {string} password - Contraseña
+ * @returns {Promise<{ sent: boolean, error?: string }>}
+ */
+export async function requestRegisterVerificationCode(email, name, password) {
+  const normalizedEmail = email.toLowerCase().trim();
+
+  const existingUser = await findUserByEmail(normalizedEmail);
+  if (existingUser) {
+    throw new Error('El email ya está registrado');
+  }
+
+  if (!password || password.length < 6) {
+    throw new Error('La contraseña debe tener al menos 6 caracteres');
+  }
+
+  const saltRounds = 10;
+  const passwordHash = await bcrypt.hash(password, saltRounds);
+  const code = generateVerificationCode();
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutos
+
+  // Invalidar códigos anteriores de registro para este email
+  await query(
+    "UPDATE email_verification_codes SET used_at = NOW() WHERE email = $1 AND type = 'register'",
+    [normalizedEmail]
+  );
+
+  await query(
+    `INSERT INTO email_verification_codes (email, code, type, meta, expires_at)
+     VALUES ($1, $2, 'register', $3::jsonb, $4)`,
+    [normalizedEmail, code, JSON.stringify({ name: name || null, password_hash: passwordHash }), expiresAt]
+  );
+
+  const result = await sendVerificationCode(normalizedEmail, code, name || '');
+  if (!result.success) {
+    throw new Error(result.error || 'Error al enviar el correo de verificación');
+  }
+
+  return { sent: true };
+}
+
+/**
+ * Verificar código de registro y crear el usuario.
+ * @param {string} email - Email del usuario
+ * @param {string} code - Código de 6 dígitos
+ * @returns {Promise<Object>} { user, token }
+ */
+export async function verifyEmailAndRegister(email, code) {
+  const normalizedEmail = email.toLowerCase().trim();
+  const codeStr = String(code || '').trim();
+
+  const result = await query(
+    `SELECT id, email, code, meta, expires_at, used_at
+     FROM email_verification_codes
+     WHERE email = $1 AND type = 'register' AND code = $2
+     ORDER BY created_at DESC LIMIT 1`,
+    [normalizedEmail, codeStr]
+  );
+
+  if (result.rows.length === 0) {
+    throw new Error('Código inválido o expirado');
+  }
+
+  const row = result.rows[0];
+  if (row.used_at) {
+    throw new Error('Este código ya fue utilizado');
+  }
+  if (new Date(row.expires_at) < new Date()) {
+    throw new Error('El código ha expirado. Solicita uno nuevo.');
+  }
+
+  const meta = row.meta || {};
+  const name = meta.name || null;
+  const passwordHash = meta.password_hash;
+  if (!passwordHash) {
+    throw new Error('Datos de registro inválidos. Intenta registrarte de nuevo.');
+  }
+
+  // Marcar código como usado
+  await query('UPDATE email_verification_codes SET used_at = NOW() WHERE id = $1', [row.id]);
+
+  // Crear usuario con email verificado
+  const insertResult = await query(
+    `INSERT INTO users (email, password_hash, name, role, email_verified)
+     VALUES ($1, $2, $3, 'user', true)
+     RETURNING id, email, name, role, number_stores, reminders_enabled, reminder_days_after_creation, reminder_days_after_last_payment, reminder_interval_days`,
+    [normalizedEmail, passwordHash, name]
+  );
+
+  const user = insertResult.rows[0];
+  const token = generateToken({ id: user.id, email: user.email, role: user.role });
+
+  return {
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      number_stores: user.number_stores ?? 1,
+      reminders_enabled: Boolean(user.reminders_enabled),
+      reminder_days_after_creation: user.reminder_days_after_creation ?? 30,
+      reminder_days_after_last_payment: user.reminder_days_after_last_payment ?? 15,
+      reminder_interval_days: user.reminder_interval_days ?? 7,
+    },
+    token,
+  };
+}
+
+/**
+ * Recuperar contraseña: solicitar código por email.
+ * @param {string} email - Email del usuario
+ * @returns {Promise<{ sent: boolean }>}
+ */
+export async function requestPasswordResetCode(email) {
+  const normalizedEmail = email.toLowerCase().trim();
+
+  const user = await findUserByEmail(normalizedEmail);
+  if (!user) {
+    // Por seguridad, no revelar si el email existe o no
+    return { sent: true };
+  }
+
+  const code = generateVerificationCode();
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+  await query(
+    "UPDATE email_verification_codes SET used_at = NOW() WHERE email = $1 AND type = 'password_reset'"
+  , [normalizedEmail]);
+
+  await query(
+    `INSERT INTO email_verification_codes (email, code, type, expires_at)
+     VALUES ($1, $2, 'password_reset', $3)`,
+    [normalizedEmail, code, expiresAt]
+  );
+
+  const result = await sendPasswordResetCode(normalizedEmail, code, user.name || '');
+  if (!result.success) {
+    throw new Error(result.error || 'Error al enviar el correo');
+  }
+
+  return { sent: true };
+}
+
+/**
+ * Restablecer contraseña con código de verificación.
+ * @param {string} email - Email del usuario
+ * @param {string} code - Código de 6 dígitos
+ * @param {string} newPassword - Nueva contraseña
+ */
+export async function resetPasswordWithCode(email, code, newPassword) {
+  const normalizedEmail = email.toLowerCase().trim();
+  const codeStr = String(code || '').trim();
+
+  if (!newPassword || newPassword.length < 6) {
+    throw new Error('La nueva contraseña debe tener al menos 6 caracteres');
+  }
+
+  const result = await query(
+    `SELECT id, expires_at, used_at
+     FROM email_verification_codes
+     WHERE email = $1 AND type = 'password_reset' AND code = $2
+     ORDER BY created_at DESC LIMIT 1`,
+    [normalizedEmail, codeStr]
+  );
+
+  if (result.rows.length === 0) {
+    throw new Error('Código inválido o expirado');
+  }
+
+  const row = result.rows[0];
+  if (row.used_at) {
+    throw new Error('Este código ya fue utilizado');
+  }
+  if (new Date(row.expires_at) < new Date()) {
+    throw new Error('El código ha expirado. Solicita uno nuevo.');
+  }
+
+  await query('UPDATE email_verification_codes SET used_at = NOW() WHERE id = $1', [row.id]);
+
+  const saltRounds = 10;
+  const passwordHash = await bcrypt.hash(newPassword, saltRounds);
+  await query(
+    'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE email = $2',
+    [passwordHash, normalizedEmail]
   );
 }
 

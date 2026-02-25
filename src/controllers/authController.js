@@ -11,6 +11,10 @@ import {
   createUser,
   updateUser,
   changePasswordForUser,
+  requestRegisterVerificationCode,
+  verifyEmailAndRegister,
+  requestPasswordResetCode,
+  resetPasswordWithCode,
 } from '../services/authService.js';
 
 /**
@@ -201,6 +205,144 @@ export async function createUserHandler(req, res, next) {
         success: false,
         error: error.message,
       });
+    }
+    next(error);
+  }
+}
+
+/**
+ * POST /api/auth/register/send-code
+ * Envía código de verificación al email para registro
+ * Body: { email, name?, password }
+ */
+export async function sendRegisterCodeHandler(req, res, next) {
+  try {
+    const { email, name, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email y contraseña son requeridos',
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: 'La contraseña debe tener al menos 6 caracteres',
+      });
+    }
+
+    await requestRegisterVerificationCode(email, name || null, password);
+
+    res.json({
+      success: true,
+      message: 'Código de verificación enviado a tu correo',
+    });
+  } catch (error) {
+    if (error.message === 'El email ya está registrado') {
+      return res.status(409).json({ success: false, error: error.message });
+    }
+    if (error.message?.includes('enviar')) {
+      return res.status(502).json({ success: false, error: error.message });
+    }
+    next(error);
+  }
+}
+
+/**
+ * POST /api/auth/register/verify
+ * Verifica el código y crea el usuario
+ * Body: { email, code }
+ */
+export async function verifyRegisterHandler(req, res, next) {
+  try {
+    const { email, code } = req.body;
+
+    if (!email || !code) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email y código son requeridos',
+      });
+    }
+
+    const result = await verifyEmailAndRegister(email, code);
+
+    res.json({
+      success: true,
+      user: result.user,
+      token: result.token,
+    });
+  } catch (error) {
+    if (error.message?.includes('inválido') || error.message?.includes('expirado') || error.message?.includes('utilizado')) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    next(error);
+  }
+}
+
+/**
+ * POST /api/auth/forgot-password
+ * Envía código de recuperación al email
+ * Body: { email }
+ */
+export async function forgotPasswordHandler(req, res, next) {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email es requerido',
+      });
+    }
+
+    await requestPasswordResetCode(email);
+
+    res.json({
+      success: true,
+      message: 'Si el correo existe, recibirás un código de verificación',
+    });
+  } catch (error) {
+    if (error.message?.includes('enviar')) {
+      return res.status(502).json({ success: false, error: error.message });
+    }
+    next(error);
+  }
+}
+
+/**
+ * POST /api/auth/reset-password
+ * Restablece la contraseña con el código
+ * Body: { email, code, newPassword }
+ */
+export async function resetPasswordHandler(req, res, next) {
+  try {
+    const { email, code, newPassword } = req.body;
+
+    if (!email || !code || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email, código y nueva contraseña son requeridos',
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: 'La contraseña debe tener al menos 6 caracteres',
+      });
+    }
+
+    await resetPasswordWithCode(email, code, newPassword);
+
+    res.json({
+      success: true,
+      message: 'Contraseña actualizada correctamente',
+    });
+  } catch (error) {
+    if (error.message?.includes('inválido') || error.message?.includes('expirado') || error.message?.includes('utilizado')) {
+      return res.status(400).json({ success: false, error: error.message });
     }
     next(error);
   }

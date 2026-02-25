@@ -9,7 +9,7 @@ import { query } from '../config/database.js';
 import { getUserById } from './authService.js';
 import { getUserStores } from './storeService.js';
 import { getPendingReceivablesWithReferenceDates } from './receivableService.js';
-import { sendWhatsAppText } from './whatsappService.js';
+import { sendWhatsAppText, sendWhatsAppTemplate } from './whatsappService.js';
 
 const REMINDER_TYPES = Object.freeze({
   AFTER_CREATION: 'after_creation',
@@ -276,19 +276,35 @@ export async function runReceivableRemindersJob() {
         try {
           const ids = [...new Set(createdForUser.map((c) => c.receivableId))];
           const details = await getReceivableDetailsForMessage(ids);
+
+          // Construir variables para template recordatorio_de_cuentas_por_cobrar
+          const cantidadCuentas = String(details.length || 0);
+
           const lines = details.map((d) => {
-            const tel = d.customer_phone ? ` - Tel: ${d.customer_phone}` : '';
-            return `• ${d.store_name}: ${d.customer_name} - ${d.amount.toFixed(2)} ${d.currency} (#${d.receivable_number})${tel}`;
+            const tel = d.customer_phone ? ` Tel: ${d.customer_phone}` : '';
+            return `${d.store_name}: ${d.customer_name} - ${d.amount.toFixed(2)} ${d.currency} (#${d.receivable_number})${tel}`;
           });
+          // WhatsApp no permite \n en params, se transforman en espacios en sendWhatsAppTemplate.
+          const listaDeClientes = lines.join(' • ');
+
           const totalsByCurrency = details.reduce((acc, d) => {
             const c = d.currency || 'USD';
             acc[c] = (acc[c] || 0) + d.amount;
             return acc;
           }, {});
-          const totalLines = Object.entries(totalsByCurrency).map(([curr, sum]) => `Total ${curr}: ${sum.toFixed(2)}`);
-          const totalBlock = totalLines.length > 0 ? `\n\n*${totalLines.join(' | ')}*` : '';
-          const message = `🔔 *Recordatorios - Cuentas por cobrar*\n\nTienes ${details.length} cuenta(s) que requieren seguimiento:\n\n${lines.join('\n')}${totalBlock}`;
-          await sendWhatsAppText(phone, message);
+          const montoTotal =
+            Object.entries(totalsByCurrency)
+              .map(([curr, sum]) => `${curr} ${sum.toFixed(2)}`)
+              .join(' | ') || '0';
+
+          // Template en Meta: recordatorio_de_cuentas_por_cobrar (idioma en)
+          // Body:
+          // Tienes {{1}} cuenta(s) que requieren seguimiento:
+          // {{2}}
+          // Total por cobrar: {{3}}
+          const bodyParams = [cantidadCuentas, listaDeClientes, montoTotal];
+
+          await sendWhatsAppTemplate(phone, 'recordatorio_de_cuentas_por_cobrar', bodyParams, 'en');
           whatsappSent++;
         } catch (err) {
           console.error('[Recordatorios] Error enviando WhatsApp al usuario', u.id, err?.message || err);
