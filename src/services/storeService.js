@@ -26,7 +26,7 @@ export async function getAllActiveStores() {
       created_at,
       updated_at
     FROM stores
-    WHERE state = 'active'
+    WHERE state = 'active' AND COALESCE(approved, false) = true
     ORDER BY created_at DESC`,
     []
   );
@@ -76,7 +76,7 @@ export async function getStoreByIdPublic(identifier) {
         created_at,
         updated_at
       FROM stores
-      WHERE id = $1 AND state = 'active'`,
+      WHERE id = $1 AND state = 'active' AND COALESCE(approved, false) = true`,
       [identifier]
     );
   } else {
@@ -98,7 +98,7 @@ export async function getStoreByIdPublic(identifier) {
         created_at,
         updated_at
       FROM stores
-      WHERE store_id = $1 AND state = 'active'`,
+      WHERE store_id = $1 AND state = 'active' AND COALESCE(approved, false) = true`,
       [trimmed]
     );
   }
@@ -158,6 +158,7 @@ export async function getUserStores(userId) {
       s.location,
       COALESCE(s.iva, 0) as iva,
       COALESCE(s.feature_send_reminder_receivables_whatsapp, false) as feature_send_reminder_receivables_whatsapp,
+      COALESCE(s.approved, false) as approved,
       s.created_at,
       s.updated_at,
       su.is_creator,
@@ -182,6 +183,7 @@ export async function getUserStores(userId) {
     location: store.location ?? null,
     iva: parseFloat(store.iva) || 0,
     feature_send_reminder_receivables_whatsapp: store.feature_send_reminder_receivables_whatsapp ?? false,
+    approved: store.approved ?? false,
     is_creator: store.is_creator,
     phone_number: store.phone_number,
     created_at: store.created_at,
@@ -210,6 +212,7 @@ export async function getUserStoreById(storeId, userId) {
       s.location,
       COALESCE(s.iva, 0) as iva,
       COALESCE(s.feature_send_reminder_receivables_whatsapp, false) as feature_send_reminder_receivables_whatsapp,
+      COALESCE(s.approved, false) as approved,
       s.created_at,
       s.updated_at,
       su.is_creator,
@@ -238,6 +241,7 @@ export async function getUserStoreById(storeId, userId) {
     location: store.location ?? null,
     iva: parseFloat(store.iva) || 0,
     feature_send_reminder_receivables_whatsapp: store.feature_send_reminder_receivables_whatsapp ?? false,
+    approved: store.approved ?? false,
     is_creator: store.is_creator,
     phone_number: store.phone_number,
     created_at: store.created_at,

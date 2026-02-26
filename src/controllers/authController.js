@@ -16,6 +16,7 @@ import {
   requestPasswordResetCode,
   resetPasswordWithCode,
 } from '../services/authService.js';
+import { getOnboardingSurveyByUserId, upsertOnboardingSurvey } from '../services/onboardingSurveyService.js';
 
 /**
  * Login de usuario
@@ -405,6 +406,42 @@ export async function updateUserHandler(req, res, next) {
         error: error.message,
       });
     }
+    next(error);
+  }
+}
+
+/**
+ * GET /api/auth/onboarding-survey
+ * Obtener encuesta de onboarding del usuario actual (si existe).
+ */
+export async function getOnboardingSurvey(req, res, next) {
+  try {
+    const userId = req.user.id;
+    const survey = await getOnboardingSurveyByUserId(userId);
+    res.json({
+      success: true,
+      survey: survey,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/auth/onboarding-survey
+ * Guardar encuesta de onboarding. Body: { business_type?, business_size?, product_line?, age? }
+ */
+export async function saveOnboardingSurvey(req, res, next) {
+  try {
+    const userId = req.user.id;
+    const { business_type, business_size, product_line, age } = req.body || {};
+    await upsertOnboardingSurvey(userId, { business_type, business_size, product_line, age });
+    const survey = await getOnboardingSurveyByUserId(userId);
+    res.json({
+      success: true,
+      survey,
+    });
+  } catch (error) {
     next(error);
   }
 }

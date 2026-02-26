@@ -13,6 +13,8 @@ import {
   verifyRegisterHandler,
   forgotPasswordHandler,
   resetPasswordHandler,
+  getOnboardingSurvey,
+  saveOnboardingSurvey,
 } from '../controllers/authController.js';
 import { authenticateToken } from '../middleware/auth.js';
 
@@ -110,5 +112,23 @@ const changePasswordValidation = [
     .withMessage('La nueva contraseña debe tener al menos 6 caracteres'),
 ];
 router.put('/me/password', authenticateToken, changePasswordValidation, changePasswordHandler);
+
+/**
+ * GET /api/auth/onboarding-survey
+ * Obtener encuesta de onboarding del usuario (si la completó).
+ */
+router.get('/onboarding-survey', authenticateToken, getOnboardingSurvey);
+
+/**
+ * POST /api/auth/onboarding-survey
+ * Guardar encuesta de onboarding. Body: { business_type?, business_size?, product_line?, age? }
+ */
+const onboardingSurveyValidation = [
+  body('business_type').optional().trim().isLength({ max: 255 }),
+  body('business_size').optional().trim().isLength({ max: 100 }),
+  body('product_line').optional().trim(),
+  body('age').optional().isInt({ min: 1, max: 120 }).toInt(),
+];
+router.post('/onboarding-survey', authenticateToken, onboardingSurveyValidation, saveOnboardingSurvey);
 
 export default router;
