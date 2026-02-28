@@ -26,7 +26,14 @@ import * as metaService from '../services/metaService.js';
 import * as metaIntegrationService from '../services/metaIntegrationService.js';
 import * as storeService from '../services/storeService.js';
 import * as uploadService from '../services/uploadService.js';
+import { hasPermission } from '../services/permissionService.js';
 import { query } from '../config/database.js';
+
+async function checkPostEditPermission(req, post) {
+  const storeId = post?.storeId ?? post?.store_id;
+  if (!storeId) return true; // post sin tienda (edge case)
+  return hasPermission(storeId, req.user.id, 'posts.edit');
+}
 
 /**
  * Obtener todos los posts del usuario autenticado
@@ -182,6 +189,14 @@ export async function updatePostHandler(req, res, next) {
         error: 'Post no encontrado',
       });
     }
+    const canEdit = await checkPostEditPermission(req, existingPost);
+    if (!canEdit) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes permiso para realizar esta acción',
+        code: 'PERMISSION_DENIED',
+      });
+    }
     
     // Procesar hashtags: máx 5, cortos, sin saltos de línea
     let hashtagsArray = existingPost.hashtags;
@@ -227,6 +242,22 @@ export async function deletePostHandler(req, res, next) {
   try {
     const { id } = req.params;
     const userId = req.user.id;
+
+    const existingPost = await postService.getPostById(id, userId);
+    if (!existingPost) {
+      return res.status(404).json({
+        success: false,
+        error: 'Post no encontrado',
+      });
+    }
+    const canEdit = await checkPostEditPermission(req, existingPost);
+    if (!canEdit) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes permiso para realizar esta acción',
+        code: 'PERMISSION_DENIED',
+      });
+    }
     
     const deleted = await postService.deletePost(id, userId);
     
@@ -260,6 +291,14 @@ export async function publishPostHandler(req, res, next) {
       return res.status(404).json({
         success: false,
         error: 'Post no encontrado',
+      });
+    }
+    const canEdit = await checkPostEditPermission(req, post);
+    if (!canEdit) {
+      return res.status(403).json({
+        success: false,
+        error: 'No tienes permiso para realizar esta acción',
+        code: 'PERMISSION_DENIED',
       });
     }
 

@@ -59,3 +59,17 @@ export const storeIdFromParamsId = (req) => req.params.id;
 
 /** Extrae storeId de params.storeId (ej. /products/store/:storeId) */
 export const storeIdFromParamsStoreId = (req) => req.params.storeId;
+
+/**
+ * Middleware que solo verifica permiso cuando getStoreId devuelve un valor.
+ * Útil para rutas con storeId opcional (ej. GET /posts?storeId=xxx).
+ */
+export function requirePermissionOptional(permissionCode, getStoreId) {
+  return async function checkPermissionOptional(req, res, next) {
+    const storeId = typeof getStoreId === 'function' ? getStoreId(req) : getStoreId;
+    if (!storeId) {
+      return next();
+    }
+    return requirePermission(permissionCode, () => storeId)(req, res, next);
+  };
+}

@@ -640,6 +640,12 @@ export async function updateProduct(productId, storeId, updates) {
     }
   }
 
+  // Si se actualizan las combinaciones, el stock global debe ser la suma de los stocks de las combinaciones
+  if (updates.combinations !== undefined && Array.isArray(updates.combinations) && updates.combinations.length > 0) {
+    const sumComboStock = updates.combinations.reduce((acc, c) => acc + getVariantStockValue(c), 0);
+    updates.stock = sumComboStock;
+  }
+
   // Si se actualiza stock, combinaciones o atributos, validar que la suma de stocks de variantes >= stock del producto
   if (updates.stock !== undefined || updates.combinations !== undefined || updates.attributes !== undefined) {
     let effectiveStock = updates.stock;

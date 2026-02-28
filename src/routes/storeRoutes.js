@@ -6,6 +6,7 @@ import express from 'express';
 import { body } from 'express-validator';
 import { getStores, getStoreById, getAllStoresPublic, getStoreByIdPublicHandler, getStoreCategoriesHandler, getStoreFeatureSendReminderReceivablesWhatsappHandler, createStoreHandler, updateStoreHandler, addUserToStoreHandler, removeUserFromStoreHandler, updateUserPhoneNumberHandler, getStoreUsersHandler, uploadStoreLogoHandler, getMyPermissionsHandler, setUserPermissionsHandler, getAllPermissionsHandler } from '../controllers/storeController.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { requirePermission } from '../middleware/permission.js';
 import { uploadLogoMiddleware } from '../middleware/multer.js';
 
 const router = express.Router();
@@ -117,15 +118,13 @@ router.get('/:id/my-permissions', authenticateToken, getMyPermissionsHandler);
 
 /**
  * GET /api/stores/:id/users
- * Solo el creador puede ver usuarios
+ * Ver usuarios de la tienda (requiere stores.manage_users)
  */
-router.get('/:id/users', authenticateToken, getStoreUsersHandler);
+router.get('/:id/users', authenticateToken, requirePermission('stores.manage_users', (req) => req.params.id), getStoreUsersHandler);
 
 /**
  * POST /api/stores/:id/users
- * Agregar un usuario a una tienda por email
- * - Solo el creador de la tienda o un admin pueden agregar usuarios
- * IMPORTANTE: Esta ruta debe estar ANTES de /:id para evitar conflictos
+ * Agregar un usuario a una tienda por email (requiere stores.manage_users)
  */
 const addUserValidation = [
   body('email')
@@ -135,19 +134,19 @@ const addUserValidation = [
     .isEmail()
     .withMessage('El formato del email no es válido'),
 ];
-router.post('/:id/users', authenticateToken, addUserValidation, addUserToStoreHandler);
+router.post('/:id/users', authenticateToken, requirePermission('stores.manage_users', (req) => req.params.id), addUserValidation, addUserToStoreHandler);
 
 /**
  * DELETE /api/stores/:id/users/:userId
- * Eliminar un usuario de la tienda. Solo el creador.
+ * Eliminar un usuario de la tienda (requiere stores.manage_users)
  */
-router.delete('/:id/users/:userId', authenticateToken, removeUserFromStoreHandler);
+router.delete('/:id/users/:userId', authenticateToken, requirePermission('stores.manage_users', (req) => req.params.id), removeUserFromStoreHandler);
 
 /**
  * PUT /api/stores/:id/users/:userId/permissions
- * Asignar permisos a un usuario. Solo el creador. Body: { permissionCodes: string[] }
+ * Asignar permisos a un usuario (requiere stores.manage_users). Body: { permissionCodes: string[] }
  */
-router.put('/:id/users/:userId/permissions', authenticateToken, setUserPermissionsHandler);
+router.put('/:id/users/:userId/permissions', authenticateToken, requirePermission('stores.manage_users', (req) => req.params.id), setUserPermissionsHandler);
 
 /**
  * PUT /api/stores/:id/users/phone
