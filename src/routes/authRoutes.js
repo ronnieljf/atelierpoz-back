@@ -42,7 +42,7 @@ router.post('/login', loginValidation, login);
 /**
  * POST /api/auth/register/send-code
  * Envía código de verificación para registro
- * Body: { email, name?, password }
+ * Body: { email, name?, password, locale? } - locale: 'es' | 'en' para idioma del correo
  */
 const registerSendCodeValidation = [
   body('email').isEmail().withMessage('Email inválido').normalizeEmail(),
@@ -68,7 +68,7 @@ router.post('/register/verify', registerVerifyValidation, verifyRegisterHandler)
 /**
  * POST /api/auth/forgot-password
  * Envía código de recuperación
- * Body: { email }
+ * Body: { email, locale? } - locale: 'es' | 'en' para idioma del correo
  */
 router.post('/forgot-password', [body('email').isEmail().withMessage('Email inválido').normalizeEmail()], forgotPasswordHandler);
 

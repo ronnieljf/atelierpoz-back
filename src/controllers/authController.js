@@ -218,7 +218,8 @@ export async function createUserHandler(req, res, next) {
  */
 export async function sendRegisterCodeHandler(req, res, next) {
   try {
-    const { email, name, password } = req.body;
+    const { email, name, password, locale } = req.body;
+    const lang = locale === 'en' ? 'en' : 'es';
 
     if (!email || !password) {
       return res.status(400).json({
@@ -234,7 +235,7 @@ export async function sendRegisterCodeHandler(req, res, next) {
       });
     }
 
-    await requestRegisterVerificationCode(email, name || null, password);
+    await requestRegisterVerificationCode(email, name || null, password, lang);
 
     res.json({
       success: true,
@@ -289,7 +290,8 @@ export async function verifyRegisterHandler(req, res, next) {
  */
 export async function forgotPasswordHandler(req, res, next) {
   try {
-    const { email } = req.body;
+    const { email, locale } = req.body;
+    const lang = locale === 'en' ? 'en' : 'es';
 
     if (!email) {
       return res.status(400).json({
@@ -298,7 +300,7 @@ export async function forgotPasswordHandler(req, res, next) {
       });
     }
 
-    await requestPasswordResetCode(email);
+    await requestPasswordResetCode(email, lang);
 
     res.json({
       success: true,

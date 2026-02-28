@@ -12,6 +12,7 @@
  */
 
 import nodemailer from 'nodemailer';
+import { getEmailTranslations } from '../i18n/emailTranslations.js';
 
 let transporter = null;
 
@@ -84,38 +85,44 @@ export async function sendEmail({ to, subject, text, html }) {
  * @param {string} email - Email del destinatario
  * @param {string} code - Código de 6 dígitos
  * @param {string} [userName] - Nombre del usuario (opcional)
+ * @param {string} [locale] - Idioma ('es' | 'en').
  */
-export async function sendVerificationCode(email, code, userName = '') {
-  const subject = 'Verifica tu correo - Atelier Poz';
+export async function sendVerificationCode(email, code, userName = '', locale = 'es') {
+  const t = getEmailTranslations(locale);
+  const { subject, title, intro, expiry, text } = t.register;
+  const greeting = t.register.greeting(userName);
+  const platform = t.platform;
+  const footer = t.footer(new Date().getFullYear());
+
   const html = `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Verifica tu correo</title>
+  <title>${title}</title>
 </head>
 <body style="margin:0;padding:0;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background-color:#0a0a0a;color:#e5e5e5;">
   <div style="max-width:480px;margin:0 auto;padding:32px 24px;">
     <div style="text-align:center;margin-bottom:32px;">
       <h1 style="font-size:24px;font-weight:600;color:#fff;margin:0;">Atelier Poz</h1>
-      <p style="font-size:14px;color:#a3a3a3;margin-top:8px;">Plataforma para tu negocio</p>
+      <p style="font-size:14px;color:#a3a3a3;margin-top:8px;">${platform}</p>
     </div>
     <div style="background:#171717;border:1px solid #262626;border-radius:16px;padding:32px;">
-      <h2 style="font-size:18px;font-weight:600;color:#fff;margin:0 0 16px;">Verifica tu correo electrónico</h2>
-      ${userName ? `<p style="color:#a3a3a3;font-size:15px;margin:0 0 24px;">Hola ${userName},</p>` : ''}
+      <h2 style="font-size:18px;font-weight:600;color:#fff;margin:0 0 16px;">${title}</h2>
+      ${greeting ? `<p style="color:#a3a3a3;font-size:15px;margin:0 0 24px;">${greeting}</p>` : ''}
       <p style="color:#a3a3a3;font-size:15px;line-height:1.6;margin:0 0 24px;">
-        Usa el siguiente código para completar tu registro:
+        ${intro}
       </p>
       <div style="background:#262626;border-radius:12px;padding:20px;text-align:center;margin:24px 0;">
         <span style="font-size:28px;font-weight:700;letter-spacing:8px;color:#e14d4d;">${code}</span>
       </div>
       <p style="color:#737373;font-size:13px;line-height:1.5;margin:0;">
-        El código expira en 15 minutos. Si no solicitaste este registro, ignora este correo.
+        ${expiry}
       </p>
     </div>
     <p style="text-align:center;color:#525252;font-size:12px;margin-top:24px;">
-      © ${new Date().getFullYear()} Atelier Poz · Todos los derechos reservados
+      ${footer}
     </p>
   </div>
 </body>
@@ -125,7 +132,7 @@ export async function sendVerificationCode(email, code, userName = '') {
   return sendEmail({
     to: email,
     subject,
-    text: `Tu código de verificación es: ${code}. Expira en 15 minutos.`,
+    text: text(code),
     html,
   });
 }
@@ -135,38 +142,44 @@ export async function sendVerificationCode(email, code, userName = '') {
  * @param {string} email - Email del destinatario
  * @param {string} code - Código de 6 dígitos
  * @param {string} [userName] - Nombre del usuario (opcional)
+ * @param {string} [locale] - Idioma ('es' | 'en').
  */
-export async function sendPasswordResetCode(email, code, userName = '') {
-  const subject = 'Recupera tu contraseña - Atelier Poz';
+export async function sendPasswordResetCode(email, code, userName = '', locale = 'es') {
+  const t = getEmailTranslations(locale);
+  const { subject, title, intro, expiry, text } = t.passwordReset;
+  const greeting = t.passwordReset.greeting(userName);
+  const platform = t.platform;
+  const footer = t.footer(new Date().getFullYear());
+
   const html = `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Recuperar contraseña</title>
+  <title>${title}</title>
 </head>
 <body style="margin:0;padding:0;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background-color:#0a0a0a;color:#e5e5e5;">
   <div style="max-width:480px;margin:0 auto;padding:32px 24px;">
     <div style="text-align:center;margin-bottom:32px;">
       <h1 style="font-size:24px;font-weight:600;color:#fff;margin:0;">Atelier Poz</h1>
-      <p style="font-size:14px;color:#a3a3a3;margin-top:8px;">Plataforma para tu negocio</p>
+      <p style="font-size:14px;color:#a3a3a3;margin-top:8px;">${platform}</p>
     </div>
     <div style="background:#171717;border:1px solid #262626;border-radius:16px;padding:32px;">
-      <h2 style="font-size:18px;font-weight:600;color:#fff;margin:0 0 16px;">Recuperar contraseña</h2>
-      ${userName ? `<p style="color:#a3a3a3;font-size:15px;margin:0 0 24px;">Hola ${userName},</p>` : ''}
+      <h2 style="font-size:18px;font-weight:600;color:#fff;margin:0 0 16px;">${title}</h2>
+      ${greeting ? `<p style="color:#a3a3a3;font-size:15px;margin:0 0 24px;">${greeting}</p>` : ''}
       <p style="color:#a3a3a3;font-size:15px;line-height:1.6;margin:0 0 24px;">
-        Recibimos una solicitud para restablecer tu contraseña. Usa el siguiente código:
+        ${intro}
       </p>
       <div style="background:#262626;border-radius:12px;padding:20px;text-align:center;margin:24px 0;">
         <span style="font-size:28px;font-weight:700;letter-spacing:8px;color:#e14d4d;">${code}</span>
       </div>
       <p style="color:#737373;font-size:13px;line-height:1.5;margin:0;">
-        El código expira en 15 minutos. Si no solicitaste este cambio, ignora este correo. Tu contraseña no se modificará.
+        ${expiry}
       </p>
     </div>
     <p style="text-align:center;color:#525252;font-size:12px;margin-top:24px;">
-      © ${new Date().getFullYear()} Atelier Poz · Todos los derechos reservados
+      ${footer}
     </p>
   </div>
 </body>
@@ -176,7 +189,7 @@ export async function sendPasswordResetCode(email, code, userName = '') {
   return sendEmail({
     to: email,
     subject,
-    text: `Tu código para recuperar contraseña es: ${code}. Expira en 15 minutos.`,
+    text: text(code),
     html,
   });
 }

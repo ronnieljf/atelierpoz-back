@@ -204,9 +204,10 @@ function generateVerificationCode() {
  * @param {string} email - Email del usuario
  * @param {string} name - Nombre (opcional)
  * @param {string} password - Contraseña
+ * @param {string} [locale] - Idioma para el correo ('es' | 'en').
  * @returns {Promise<{ sent: boolean, error?: string }>}
  */
-export async function requestRegisterVerificationCode(email, name, password) {
+export async function requestRegisterVerificationCode(email, name, password, locale = 'es') {
   const normalizedEmail = email.toLowerCase().trim();
 
   const existingUser = await findUserByEmail(normalizedEmail);
@@ -235,7 +236,7 @@ export async function requestRegisterVerificationCode(email, name, password) {
     [normalizedEmail, code, JSON.stringify({ name: name || null, password_hash: passwordHash }), expiresAt]
   );
 
-  const result = await sendVerificationCode(normalizedEmail, code, name || '');
+  const result = await sendVerificationCode(normalizedEmail, code, name || '', locale);
   if (!result.success) {
     throw new Error(result.error || 'Error al enviar el correo de verificación');
   }
@@ -313,9 +314,10 @@ export async function verifyEmailAndRegister(email, code) {
 /**
  * Recuperar contraseña: solicitar código por email.
  * @param {string} email - Email del usuario
+ * @param {string} [locale] - Idioma para el correo ('es' | 'en').
  * @returns {Promise<{ sent: boolean }>}
  */
-export async function requestPasswordResetCode(email) {
+export async function requestPasswordResetCode(email, locale = 'es') {
   const normalizedEmail = email.toLowerCase().trim();
 
   const user = await findUserByEmail(normalizedEmail);
@@ -337,7 +339,7 @@ export async function requestPasswordResetCode(email) {
     [normalizedEmail, code, expiresAt]
   );
 
-  const result = await sendPasswordResetCode(normalizedEmail, code, user.name || '');
+  const result = await sendPasswordResetCode(normalizedEmail, code, user.name || '', locale);
   if (!result.success) {
     throw new Error(result.error || 'Error al enviar el correo');
   }
