@@ -24,8 +24,12 @@ export async function getAllActiveStores() {
       COALESCE(iva, 0) as iva,
       COALESCE(feature_send_reminder_receivables_whatsapp, false) as feature_send_reminder_receivables_whatsapp,
       created_at,
-      updated_at
-    FROM stores
+      updated_at,
+      (SELECT su.phone_number FROM store_users su
+       WHERE su.store_id = s.id AND su.phone_number IS NOT NULL AND su.phone_number != ''
+       ORDER BY su.is_creator DESC NULLS LAST
+       LIMIT 1) as phone_number
+    FROM stores s
     WHERE state = 'active' AND COALESCE(approved, false) = true
     ORDER BY created_at DESC`,
     []
@@ -43,6 +47,7 @@ export async function getAllActiveStores() {
     location: store.location ?? null,
     iva: parseFloat(store.iva) || 0,
     feature_send_reminder_receivables_whatsapp: store.feature_send_reminder_receivables_whatsapp ?? false,
+    phone_number: store.phone_number?.trim() || null,
     created_at: store.created_at,
     updated_at: store.updated_at,
   }));
@@ -74,8 +79,12 @@ export async function getStoreByIdPublic(identifier) {
         COALESCE(iva, 0) as iva,
         COALESCE(feature_send_reminder_receivables_whatsapp, false) as feature_send_reminder_receivables_whatsapp,
         created_at,
-        updated_at
-      FROM stores
+        updated_at,
+        (SELECT su.phone_number FROM store_users su
+         WHERE su.store_id = s.id AND su.phone_number IS NOT NULL AND su.phone_number != ''
+         ORDER BY su.is_creator DESC NULLS LAST
+         LIMIT 1) as phone_number
+      FROM stores s
       WHERE id = $1 AND state = 'active' AND COALESCE(approved, false) = true`,
       [identifier]
     );
@@ -96,8 +105,12 @@ export async function getStoreByIdPublic(identifier) {
         COALESCE(iva, 0) as iva,
         COALESCE(feature_send_reminder_receivables_whatsapp, false) as feature_send_reminder_receivables_whatsapp,
         created_at,
-        updated_at
-      FROM stores
+        updated_at,
+        (SELECT su.phone_number FROM store_users su
+         WHERE su.store_id = s.id AND su.phone_number IS NOT NULL AND su.phone_number != ''
+         ORDER BY su.is_creator DESC NULLS LAST
+         LIMIT 1) as phone_number
+      FROM stores s
       WHERE store_id = $1 AND state = 'active' AND COALESCE(approved, false) = true`,
       [trimmed]
     );
@@ -118,11 +131,39 @@ export async function getStoreByIdPublic(identifier) {
     tiktok: store.tiktok ?? null,
     description: store.description ?? null,
     location: store.location ?? null,
+    phone_number: store.phone_number?.trim() || null,
     iva: parseFloat(store.iva) || 0,
     feature_send_reminder_receivables_whatsapp: store.feature_send_reminder_receivables_whatsapp ?? false,
     created_at: store.created_at,
     updated_at: store.updated_at,
   };
+}
+
+/**
+ * Obtener usuarios de contacto de una tienda (público).
+ * Solo store_users con phone_number configurado.
+ * @param {string} identifier - UUID de la tienda o store_id (slug)
+ * @returns {Promise<Array<{ name: string, phoneNumber: string }>>}
+ */
+export async function getStoreContactUsersPublic(identifier) {
+  const store = await getStoreByIdPublic(identifier);
+  if (!store) return [];
+
+  const result = await query(
+    `SELECT u.name, su.phone_number
+     FROM store_users su
+     INNER JOIN users u ON su.user_id = u.id
+     WHERE su.store_id = $1
+       AND su.phone_number IS NOT NULL
+       AND TRIM(su.phone_number) != ''
+     ORDER BY su.is_creator DESC, su.created_at ASC`,
+    [store.id]
+  );
+
+  return result.rows.map((row) => ({
+    name: (row.name || row.phone_number || 'Contacto').trim(),
+    phoneNumber: row.phone_number?.trim() || '',
+  })).filter((r) => r.phoneNumber);
 }
 
 /**

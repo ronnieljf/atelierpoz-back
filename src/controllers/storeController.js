@@ -3,7 +3,7 @@
  * Maneja las peticiones HTTP y delega la lógica de negocio a los servicios
  */
 
-import { getUserStores, getUserStoreById, getAllActiveStores, getStoreByIdPublic, getStoreFeatureSendReminderReceivablesWhatsapp, createStore, updateStore, userHasStoreAsCreator, getUserStoreCountAsCreator, getUserStoreLimit, isStoreCreator, findUserByEmail, addUserToStore, userExistsInStore, updateUserPhoneNumber, getStoreUsers, removeUserFromStore } from '../services/storeService.js';
+import { getUserStores, getUserStoreById, getAllActiveStores, getStoreByIdPublic, getStoreContactUsersPublic, getStoreFeatureSendReminderReceivablesWhatsapp, createStore, updateStore, userHasStoreAsCreator, getUserStoreCountAsCreator, getUserStoreLimit, isStoreCreator, findUserByEmail, addUserToStore, userExistsInStore, updateUserPhoneNumber, getStoreUsers, removeUserFromStore } from '../services/storeService.js';
 import { assignAllPermissionsToUser } from '../services/permissionService.js';
 import { getUserPermissionCodesForStore, setUserPermissions, getAllPermissions } from '../services/permissionService.js';
 import { getCategoriesByStoreId } from '../services/categoryService.js';
@@ -62,6 +62,24 @@ export async function getStoreByIdPublicHandler(req, res, next) {
     res.json({
       success: true,
       store,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Obtener usuarios de contacto de una tienda (público).
+ * GET /api/stores/public/:id/contact-users
+ */
+export async function getStoreContactUsersPublicHandler(req, res, next) {
+  try {
+    const { id } = req.params;
+    const contacts = await getStoreContactUsersPublic(id);
+    res.json({
+      success: true,
+      contacts,
+      count: contacts.length,
     });
   } catch (error) {
     next(error);

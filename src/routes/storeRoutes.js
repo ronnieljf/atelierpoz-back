@@ -4,7 +4,7 @@
 
 import express from 'express';
 import { body } from 'express-validator';
-import { getStores, getStoreById, getAllStoresPublic, getStoreByIdPublicHandler, getStoreCategoriesHandler, getStoreFeatureSendReminderReceivablesWhatsappHandler, createStoreHandler, updateStoreHandler, addUserToStoreHandler, removeUserFromStoreHandler, updateUserPhoneNumberHandler, getStoreUsersHandler, uploadStoreLogoHandler, getMyPermissionsHandler, setUserPermissionsHandler, getAllPermissionsHandler } from '../controllers/storeController.js';
+import { getStores, getStoreById, getAllStoresPublic, getStoreByIdPublicHandler, getStoreCategoriesHandler, getStoreContactUsersPublicHandler, getStoreFeatureSendReminderReceivablesWhatsappHandler, createStoreHandler, updateStoreHandler, addUserToStoreHandler, removeUserFromStoreHandler, updateUserPhoneNumberHandler, getStoreUsersHandler, uploadStoreLogoHandler, getMyPermissionsHandler, setUserPermissionsHandler, getAllPermissionsHandler } from '../controllers/storeController.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/permission.js';
 import { uploadLogoMiddleware } from '../middleware/multer.js';
@@ -23,6 +23,12 @@ router.get('/public', getAllStoresPublic);
  * Obtener categorías de una tienda (público, para filtros en la página de la tienda)
  */
 router.get('/public/:id/categories', getStoreCategoriesHandler);
+
+/**
+ * GET /api/stores/public/:id/contact-users
+ * Obtener usuarios de contacto (con teléfono) de la tienda (público)
+ */
+router.get('/public/:id/contact-users', getStoreContactUsersPublicHandler);
 
 /**
  * GET /api/stores/public/:id/feature-send-reminder-receivables-whatsapp
