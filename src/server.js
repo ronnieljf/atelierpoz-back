@@ -26,6 +26,7 @@ import vendorRoutes from './routes/vendorRoutes.js';
 import purchaseRoutes from './routes/purchaseRoutes.js';
 import webhookRoutes from './routes/webhookRoutes.js';
 import reminderRoutes from './routes/reminderRoutes.js';
+import clientRecurringReminderRoutes from './routes/clientRecurringReminderRoutes.js';
 import cron from 'node-cron';
 import { flowPost } from './controllers/flowController.js';
 import { runReceivableRemindersJob } from './services/reminderService.js';
@@ -76,6 +77,7 @@ app.use('/api/vendors', vendorRoutes);
 app.use('/api/purchases', purchaseRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/reminders', reminderRoutes);
+app.use('/api/client-recurring-reminders', clientRecurringReminderRoutes);
 
 /** POST /api/flow — WhatsApp Flow data exchange (payload cifrado; respuesta cifrada). */
 app.post('/api/flow', flowPost);

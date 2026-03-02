@@ -5,6 +5,7 @@
 import {
   getClientsByStore,
   getClientById,
+  getClientsByIds,
   createClient,
   updateClient,
   deleteClient,
@@ -46,6 +47,27 @@ export async function getClientsHandler(req, res, next) {
       total: result.total,
       count: result.clients.length,
     });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * GET /api/clients/by-ids?storeId=&ids=uuid1,uuid2,...
+ */
+export async function getClientsByIdsHandler(req, res, next) {
+  try {
+    const { storeId, ids } = req.query;
+    if (!storeId) {
+      return res.status(400).json({ success: false, error: 'storeId es requerido' });
+    }
+    const hasAccess = await checkStoreAccess(req, storeId);
+    if (!hasAccess) {
+      return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
+    }
+    const idList = typeof ids === 'string' ? ids.split(',').map((s) => s.trim()).filter(Boolean) : [];
+    const clients = await getClientsByIds(storeId, idList);
+    res.json({ success: true, clients });
   } catch (error) {
     next(error);
   }

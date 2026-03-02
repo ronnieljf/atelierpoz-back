@@ -177,6 +177,26 @@ export async function getClientById(clientId, storeId = null) {
 }
 
 /**
+ * Obtener clientes por IDs (misma tienda). ids: array de UUID.
+ * @param {string} storeId
+ * @param {string[]} ids
+ * @returns {Promise<Object[]>}
+ */
+export async function getClientsByIds(storeId, ids) {
+  if (!ids || ids.length === 0) return [];
+  const validIds = ids.filter((id) => id && typeof id === 'string').slice(0, 500);
+  if (validIds.length === 0) return [];
+  const placeholders = validIds.map((_, i) => `$${i + 2}`).join(', ');
+  const result = await query(
+    `SELECT id, name, phone, email, address, identity_document, store_id, created_at, updated_at
+     FROM clients
+     WHERE store_id = $1 AND id IN (${placeholders})`,
+    [storeId, ...validIds]
+  );
+  return result.rows;
+}
+
+/**
  * Actualizar cliente
  */
 export async function updateClient(clientId, storeId, updates) {

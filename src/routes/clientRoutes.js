@@ -7,6 +7,7 @@ import express from 'express';
 import { body } from 'express-validator';
 import {
   getClientsHandler,
+  getClientsByIdsHandler,
   getClientHandler,
   createClientHandler,
   updateClientHandler,
@@ -22,6 +23,7 @@ router.use(authenticateToken);
 const storeIdQueryOrBody = (req) => req.query.storeId || req.body?.storeId;
 
 router.get('/', requirePermission('clients.view', storeIdQueryOrBody), getClientsHandler);
+router.get('/by-ids', requirePermission('clients.view', storeIdQueryOrBody), getClientsByIdsHandler);
 router.get('/:id', requirePermission('clients.view', storeIdQueryOrBody), getClientHandler);
 
 const createValidation = [

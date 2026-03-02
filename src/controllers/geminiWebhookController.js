@@ -7,6 +7,7 @@ import { processStoreOwnerReceivablesOnly } from '../services/groqService.js';
 import { getStoresWithUserIdByPhoneNumber, getStoreNameAndPhone } from '../services/storeService.js';
 import { generateToken, getUserById } from '../services/authService.js';
 import { getPendingReceivablesByCustomerPhone } from '../services/receivableService.js';
+import { tryStoreDirectQuery } from '../services/storeWhatsAppQueryService.js';
 
 const GRAPH_API_VERSION = 'v22.0';
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
@@ -111,9 +112,24 @@ export async function geminiWebhookPost(req, res) {
             continue;
           }
 
-          // Es dueño de tienda: solo consultas de cuentas por cobrar (Groq restringido)
-          const result = await processStoreOwnerReceivablesOnly(from, messageText);
-          let responseText = result.response || 'No pude procesar tu consulta.';
+          // Es dueño de tienda: validar primero, responder solo si no hay match directo
+          if (!messageText) {
+            console.log(`[groq-webhook] Mensaje vacío de tienda ${from}`);
+            continue;
+          }
+
+          // 1. Intentar consulta directa (sin IA) para ahorrar tokens
+          const directResult = await tryStoreDirectQuery(from, messageText);
+          let responseText;
+          if (directResult.handled && directResult.response) {
+            responseText = directResult.response;
+            console.log(`[groq-webhook] Respuesta directa (sin IA) para ${from}`);
+          } else {
+            // 2. Sin match directo: usar IA (Llama) para mantener la conversación
+            const result = await processStoreOwnerReceivablesOnly(from, messageText);
+            responseText = result.response || 'No pude procesar tu consulta.';
+            console.log(`[groq-webhook] Respuesta IA (Llama) para ${from}`);
+          }
           if (responseText.length > MAX_MESSAGE_LENGTH) {
             responseText = responseText.slice(0, MAX_MESSAGE_LENGTH - '\n\n...(ver más en la web)'.length) + '\n\n...(ver más en la web)';
           }
