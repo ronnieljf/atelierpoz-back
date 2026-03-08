@@ -557,7 +557,7 @@ async function executeFunction(functionName, args, userStores) {
         const store = userStores.find(s => s.storeId === storeId);
         if (!store) throw new Error('Tienda no encontrada');
         
-        const newReceivable = await createReceivable({
+        const { receivable: newReceivable } = await createReceivable({
           storeId,
           createdBy: store.userId,
           customerName,

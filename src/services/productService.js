@@ -1229,7 +1229,7 @@ export async function searchProductsForPOS(storeId, search, limit = 30) {
   params.push(limitNum);
 
   const result = await query(
-    `SELECT p.id, p.name, p.base_price, p.currency, p.stock, p.sku, p.attributes, p.combinations, COALESCE(p.iva, 0) as iva
+    `SELECT p.id, p.name, p.base_price, p.currency, p.stock, p.sku, p.images, p.attributes, p.combinations, COALESCE(p.iva, 0) as iva
      FROM products p
      INNER JOIN stores s ON p.store_id = s.id
      WHERE p.store_id = $1 AND s.state = 'active'
@@ -1253,6 +1253,17 @@ export async function searchProductsForPOS(storeId, search, limit = 30) {
     }
     if (!Array.isArray(combinations)) combinations = [];
 
+    let productImages = row.images;
+    if (typeof productImages === 'string') {
+      try {
+        productImages = JSON.parse(productImages);
+      } catch {
+        productImages = [];
+      }
+    }
+    if (!Array.isArray(productImages)) productImages = [];
+    const productImageUrl = productImages[0] || null;
+
     const basePrice = parseFloat(row.base_price) || 0;
     const baseStock = parseInt(row.stock, 10) || 0;
     const iva = parseFloat(row.iva) || 0;
@@ -1271,6 +1282,7 @@ export async function searchProductsForPOS(storeId, search, limit = 30) {
           stock: baseStock,
           displayName: row.name,
           currency: row.currency || 'USD',
+          imageUrl: productImageUrl,
         });
       }
     } else {
@@ -1319,6 +1331,8 @@ export async function searchProductsForPOS(storeId, search, limit = 30) {
           }
         }
         if (stock > 0) {
+          const comboImages = Array.isArray(combo.images) ? combo.images : [];
+          const imageUrl = (comboImages[0] || productImageUrl) || null;
           out.push({
             productId: row.id,
             combinationId: comboId,
@@ -1333,6 +1347,7 @@ export async function searchProductsForPOS(storeId, search, limit = 30) {
             selections,
             selectedVariants,
             priceModifier: priceMod,
+            imageUrl,
           });
         }
       }
@@ -1356,7 +1371,7 @@ export async function getPOSProductsByKeys(storeId, keys) {
   const keySet = new Set(keys.map((k) => `${k.productId}-${k.combinationId ?? 'base'}`));
 
   const result = await query(
-    `SELECT p.id, p.name, p.base_price, p.currency, p.stock, p.sku, p.attributes, p.combinations, COALESCE(p.iva, 0) as iva
+    `SELECT p.id, p.name, p.base_price, p.currency, p.stock, p.sku, p.attributes, p.combinations, p.images, COALESCE(p.iva, 0) as iva
      FROM products p
      INNER JOIN stores s ON p.store_id = s.id
      WHERE p.store_id = $1 AND s.state = 'active' AND p.id = ANY($2::uuid[])`,
@@ -1365,6 +1380,17 @@ export async function getPOSProductsByKeys(storeId, keys) {
 
   const out = [];
   for (const row of result.rows) {
+    let productImages = row.images;
+    if (typeof productImages === 'string') {
+      try {
+        productImages = JSON.parse(productImages);
+      } catch {
+        productImages = [];
+      }
+    }
+    if (!Array.isArray(productImages)) productImages = [];
+    const productImageUrl = productImages[0] || null;
+
     let combinations = row.combinations;
     if (typeof combinations === 'string') {
       try {
@@ -1394,6 +1420,7 @@ export async function getPOSProductsByKeys(storeId, keys) {
           stock: baseStock,
           displayName: row.name,
           currency: row.currency || 'USD',
+          imageUrl: productImageUrl,
         });
       }
     } else {
@@ -1443,6 +1470,8 @@ export async function getPOSProductsByKeys(storeId, keys) {
             }
           }
         }
+        const comboImages = Array.isArray(combo.images) ? combo.images : [];
+        const imageUrl = (comboImages[0] || productImageUrl) || null;
         out.push({
           productId: row.id,
           combinationId: comboId,
@@ -1457,6 +1486,7 @@ export async function getPOSProductsByKeys(storeId, keys) {
           selections,
           selectedVariants,
           priceModifier: priceMod,
+          imageUrl,
         });
       }
     }
@@ -1475,7 +1505,7 @@ export async function getProductPOSOptions(storeId, productId) {
   if (!storeId || !productId) return [];
 
   const result = await query(
-    `SELECT p.id, p.name, p.base_price, p.currency, p.stock, p.sku, p.attributes, p.combinations, COALESCE(p.iva, 0) as iva
+    `SELECT p.id, p.name, p.base_price, p.currency, p.stock, p.sku, p.attributes, p.combinations, p.images, COALESCE(p.iva, 0) as iva
      FROM products p
      INNER JOIN stores s ON p.store_id = s.id
      WHERE p.store_id = $1 AND s.state = 'active' AND p.id = $2`,
@@ -1484,6 +1514,17 @@ export async function getProductPOSOptions(storeId, productId) {
 
   const row = result.rows[0];
   if (!row) return [];
+
+  let productImages = row.images;
+  if (typeof productImages === 'string') {
+    try {
+      productImages = JSON.parse(productImages);
+    } catch {
+      productImages = [];
+    }
+  }
+  if (!Array.isArray(productImages)) productImages = [];
+  const productImageUrl = productImages[0] || null;
 
   let combinations = row.combinations;
   if (typeof combinations === 'string') {
@@ -1513,6 +1554,7 @@ export async function getProductPOSOptions(storeId, productId) {
       stock: baseStock,
       displayName: row.name,
       currency: row.currency || 'USD',
+      imageUrl: productImageUrl,
     });
     return out;
   }
@@ -1562,6 +1604,8 @@ export async function getProductPOSOptions(storeId, productId) {
         }
       }
     }
+    const comboImages = Array.isArray(combo.images) ? combo.images : [];
+    const imageUrl = (comboImages[0] || productImageUrl) || null;
     out.push({
       productId: row.id,
       combinationId: comboId,
@@ -1576,6 +1620,7 @@ export async function getProductPOSOptions(storeId, productId) {
       selections,
       selectedVariants,
       priceModifier: priceMod,
+      imageUrl,
     });
   }
   return out;

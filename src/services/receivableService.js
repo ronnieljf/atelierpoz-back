@@ -92,8 +92,8 @@ export async function createReceivable(data) {
     );
     row = result.rows[0];
     await client.query(
-      `INSERT INTO receivables_logs (receivable_id, user_id, action, details) VALUES ($1, $2, 'created', '{}'::jsonb)`,
-      [row.id, createdBy]
+      `INSERT INTO receivables_logs (receivable_id, user_id, action, details) VALUES ($1, $2, 'created', $3::jsonb)`,
+      [row.id, createdBy, JSON.stringify({ amount: amountNum, currency: currency || 'USD', customerName: customerName || null, fromRequest: !!requestId })]
     );
     await client.query('COMMIT');
   } catch (err) {
@@ -116,12 +116,13 @@ export async function createReceivable(data) {
     }
   }
 
+  let initialPaymentId = null;
   if (initialPayment && initialPayment.amount != null && initialPayment.amount !== '') {
     const abonoNum = parseFloat(initialPayment.amount);
     if (!Number.isNaN(abonoNum) && abonoNum > 0) {
-      await query(
+      const payResult = await query(
         `INSERT INTO receivable_payments (receivable_id, amount, currency, notes, created_by)
-         VALUES ($1, $2, $3, $4, $5)`,
+         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
         [
           receivableId,
           abonoNum,
@@ -130,6 +131,7 @@ export async function createReceivable(data) {
           createdBy,
         ]
       );
+      initialPaymentId = payResult.rows[0]?.id || null;
       const sumResult = await query(
         `SELECT COALESCE(SUM(amount), 0)::numeric as total FROM receivable_payments WHERE receivable_id = $1`,
         [receivableId]
@@ -142,8 +144,8 @@ export async function createReceivable(data) {
           [createdBy, receivableId, storeId]
         );
         await query(
-          `INSERT INTO receivables_logs (receivable_id, user_id, action, details) VALUES ($1, $2, 'paid_initial', '{}'::jsonb)`,
-          [receivableId, createdBy]
+          `INSERT INTO receivables_logs (receivable_id, user_id, action, details) VALUES ($1, $2, 'paid_initial', $3::jsonb)`,
+          [receivableId, createdBy, JSON.stringify({ amount: abonoNum, currency: currency || 'USD' })]
         );
         row.status = 'paid';
         row.paid_at = new Date();
@@ -156,7 +158,7 @@ export async function createReceivable(data) {
 
   const storeResult = await query('SELECT name FROM stores WHERE id = $1', [storeId]);
   if (storeResult.rows[0]) row.store_name = storeResult.rows[0].name;
-  return formatReceivable(row);
+  return { receivable: formatReceivable(row), initialPaymentId };
 }
 
 /**
@@ -579,9 +581,12 @@ export async function updateReceivable(receivableId, storeId, updates, updatedBy
     status: 'status',
   };
 
-  // Si se va a cancelar, necesitamos el estado y request_id actuales para restaurar stock
+  // Obtener estado anterior para logs y para restaurar stock al cancelar
   let previousReceivable = null;
-  if (updates.status === 'cancelled') {
+  if (updatedByUserId && (updates.status !== undefined || Object.keys(updates).some((k) => ['customerName', 'customerPhone', 'description', 'amount', 'currency'].includes(k)))) {
+    previousReceivable = await getReceivableById(receivableId, storeId);
+  }
+  if (!previousReceivable && updates.status === 'cancelled') {
     previousReceivable = await getReceivableById(receivableId, storeId);
   }
 
@@ -659,9 +664,13 @@ export async function updateReceivable(receivableId, storeId, updates, updatedBy
 
   if (updatedByUserId) {
     const action = updates.status === 'paid' ? 'status_paid' : updates.status === 'cancelled' ? 'status_cancelled' : 'updated';
+    const details =
+      action === 'status_paid' || action === 'status_cancelled'
+        ? { previousStatus: previousReceivable?.status, newStatus: updates.status }
+        : updates;
     await query(
       `INSERT INTO receivables_logs (receivable_id, user_id, action, details) VALUES ($1, $2, $3, $4::jsonb)`,
-      [receivableId, updatedByUserId, action, JSON.stringify(updates)]
+      [receivableId, updatedByUserId, action, JSON.stringify(details)]
     );
   }
 
@@ -869,6 +878,20 @@ export async function getPendingReceivablesWithReferenceDates(storeId) {
     created_at: row.created_at,
     last_payment_date: row.last_payment_date,
   }));
+}
+
+/**
+ * Insertar un log de actividad en una cuenta por cobrar.
+ * @param {string} receivableId
+ * @param {string} userId
+ * @param {string} action - ej: 'reminder_sent', 'created', 'payment_added'
+ * @param {Object} [details={}]
+ */
+export async function insertReceivableLog(receivableId, userId, action, details = {}) {
+  await query(
+    `INSERT INTO receivables_logs (receivable_id, user_id, action, details) VALUES ($1, $2, $3, $4::jsonb)`,
+    [receivableId, userId, action, JSON.stringify(details)]
+  );
 }
 
 /**

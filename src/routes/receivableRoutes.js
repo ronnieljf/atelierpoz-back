@@ -20,9 +20,13 @@ import {
   deleteReceivablePaymentHandler,
   sendReceivableRemindersHandler,
   bulkUpdateReceivableStatusHandler,
+  getReceivableAttachmentsHandler,
+  createReceivableAttachmentHandler,
+  getReceivableAttachmentDownloadHandler,
 } from '../controllers/receivableController.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/permission.js';
+import { uploadReceivableAttachmentMiddleware } from '../middleware/multer.js';
 
 const router = express.Router();
 const storeIdQOrB = (req) => req.query.storeId || req.body?.storeId;
@@ -34,7 +38,7 @@ router.get('/pending-total', requirePermission('receivables.view', storeIdQOrB),
 
 /**
  * POST /api/receivables/send-reminders
- * Envía recordatorios por WhatsApp con template recordatorio_estado_de_cuenta. Body: { storeId, recipients: [ { phone, receivableIds } ] }
+ * Envía recordatorios por WhatsApp con template notificacion_pago_pendiente. Body: { storeId, recipients: [ { phone, receivableIds } ] }
  */
 const sendRemindersValidation = [
   body('storeId').notEmpty().withMessage('storeId es requerido').isUUID().withMessage('storeId debe ser UUID'),
@@ -73,7 +77,13 @@ const fromRequestValidation = [
   body('initialPayment.amount').optional().isFloat({ min: 0 }).withMessage('Abono inicial debe ser mayor o igual a 0'),
   body('initialPayment.notes').optional().trim().isLength({ max: 1000 }),
 ];
-router.post('/from-request', requirePermission('receivables.create', storeIdQOrB), fromRequestValidation, createReceivableFromRequestHandler);
+router.post(
+  '/from-request',
+  uploadReceivableAttachmentMiddleware,
+  requirePermission('receivables.create', storeIdQOrB),
+  fromRequestValidation,
+  createReceivableFromRequestHandler
+);
 
 /**
  * POST /api/receivables
@@ -94,7 +104,13 @@ const createValidation = [
   body('initialPayment.amount').optional().isFloat({ min: 0 }).withMessage('Abono inicial debe ser mayor o igual a 0'),
   body('initialPayment.notes').optional().trim().isLength({ max: 1000 }),
 ];
-router.post('/', requirePermission('receivables.create', storeIdQOrB), createValidation, createReceivableHandler);
+router.post(
+  '/',
+  uploadReceivableAttachmentMiddleware,
+  requirePermission('receivables.create', storeIdQOrB),
+  createValidation,
+  createReceivableHandler
+);
 
 /**
  * GET /api/receivables/:id/payments
@@ -104,7 +120,8 @@ router.get('/:id/payments', requirePermission('receivables.view', storeIdQOrB), 
 
 /**
  * POST /api/receivables/:id/payments
- * Registrar abono. Body: { storeId, amount, currency?, notes? }
+ * Registrar abono. Body/multipart: { storeId, amount, currency?, notes? }, opcional: file (comprobante)
+ * Multer debe ir antes de requirePermission para que req.body tenga storeId, amount, etc.
  */
 const paymentValidation = [
   body('storeId').notEmpty().withMessage('storeId es requerido').isUUID().withMessage('storeId debe ser UUID'),
@@ -116,7 +133,41 @@ const paymentValidation = [
   body('currency').optional().isIn(['USD', 'EUR', 'VES']),
   body('notes').optional().trim().isLength({ max: 1000 }),
 ];
-router.post('/:id/payments', requirePermission('receivables.edit', storeIdQOrB), paymentValidation, createReceivablePaymentHandler);
+router.post(
+  '/:id/payments',
+  uploadReceivableAttachmentMiddleware,
+  requirePermission('receivables.edit', storeIdQOrB),
+  paymentValidation,
+  createReceivablePaymentHandler
+);
+
+/**
+ * GET /api/receivables/:id/attachments
+ * Listar adjuntos (comprobantes). Query: storeId
+ */
+router.get('/:id/attachments', requirePermission('receivables.view', storeIdQOrB), getReceivableAttachmentsHandler);
+
+/**
+ * POST /api/receivables/:id/attachments
+ * Subir comprobante. Multipart: file, body: storeId, paymentId? (opcional)
+ * Multer debe ir antes de requirePermission para que req.body.storeId esté disponible.
+ */
+router.post(
+  '/:id/attachments',
+  uploadReceivableAttachmentMiddleware,
+  requirePermission('receivables.edit', storeIdQOrB),
+  createReceivableAttachmentHandler
+);
+
+/**
+ * GET /api/receivables/:id/attachments/:attachmentId/download
+ * Descargar archivo (redirige a URL firmada). Query: storeId
+ */
+router.get(
+  '/:id/attachments/:attachmentId/download',
+  requirePermission('receivables.view', storeIdQOrB),
+  getReceivableAttachmentDownloadHandler
+);
 
 /**
  * DELETE /api/receivables/:id/payments/:paymentId

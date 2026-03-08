@@ -38,7 +38,7 @@ export async function uploadFilesHandler(req, res, next) {
       console.log('[upload] Validación fallida:', invalidFiles.map((f) => ({ name: f.originalname, mimetype: f.mimetype, size: f.size })));
       return res.status(400).json({
         success: false,
-        error: 'Algunos archivos no son válidos. Solo se permiten imágenes (JPEG, PNG, WebP, GIF, SVG) de máximo 10MB',
+        error: 'Algunos archivos no son válidos. Solo se permiten imágenes (JPEG, PNG, WebP, GIF, SVG, AVIF) de máximo 10MB',
       });
     }
 

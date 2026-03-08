@@ -16,11 +16,32 @@ import {
   createReceivablePayment,
   deleteReceivablePayment,
   getReceivablesLogs,
+  insertReceivableLog,
 } from '../services/receivableService.js';
 import { getUserStoreById, getStoreNameAndPhone } from '../services/storeService.js';
 import { sendWhatsAppTemplate } from '../services/whatsappService.js';
 import { getRequestById } from '../services/requestService.js';
 import { query } from '../config/database.js';
+import {
+  createAttachment,
+  getAttachmentsByReceivableId,
+  getAttachmentDownloadUrl,
+} from '../services/receivableAttachmentService.js';
+
+/** Parsea initialPayment desde body (puede venir como objeto o JSON string en FormData) */
+function parseInitialPayment(body) {
+  let ip = body?.initialPayment;
+  if (typeof ip === 'string') {
+    try {
+      ip = JSON.parse(ip);
+    } catch {
+      return null;
+    }
+  }
+  return ip != null && ip.amount != null && ip.amount !== ''
+    ? { amount: ip.amount, notes: ip.notes }
+    : null;
+}
 
 /**
  * POST /api/receivables
@@ -54,13 +75,7 @@ export async function createReceivableHandler(req, res, next) {
       });
     }
 
-    const initialPayment =
-      req.body.initialPayment != null && req.body.initialPayment.amount != null && req.body.initialPayment.amount !== ''
-        ? {
-            amount: req.body.initialPayment.amount,
-            notes: req.body.initialPayment.notes,
-          }
-        : null;
+    const initialPayment = parseInitialPayment(req.body);
     if (initialPayment) {
       const abonoNum = parseFloat(initialPayment.amount);
       if (Number.isNaN(abonoNum) || abonoNum < 0) {
@@ -71,7 +86,7 @@ export async function createReceivableHandler(req, res, next) {
       }
     }
 
-    const receivable = await createReceivable({
+    const { receivable, initialPaymentId } = await createReceivable({
       storeId,
       createdBy: userId,
       customerName: customerName?.trim() || null,
@@ -81,6 +96,16 @@ export async function createReceivableHandler(req, res, next) {
       currency: currency || 'USD',
       initialPayment,
     });
+
+    // Si se subió comprobante para el abono inicial, crear adjunto
+    if (req.file && req.file.buffer && initialPaymentId) {
+      await createAttachment({
+        receivableId: receivable.id,
+        paymentId: initialPaymentId,
+        file: req.file,
+        createdBy: userId,
+      });
+    }
 
     return res.status(201).json({
       success: true,
@@ -115,13 +140,7 @@ export async function createReceivableFromRequestHandler(req, res, next) {
       });
     }
 
-    const initialPayment =
-      req.body.initialPayment != null && req.body.initialPayment.amount != null && req.body.initialPayment.amount !== ''
-        ? {
-            amount: req.body.initialPayment.amount,
-            notes: req.body.initialPayment.notes,
-          }
-        : null;
+    const initialPayment = parseInitialPayment(req.body);
     if (initialPayment) {
       const abonoNum = parseFloat(initialPayment.amount);
       if (Number.isNaN(abonoNum) || abonoNum < 0) {
@@ -143,13 +162,23 @@ export async function createReceivableFromRequestHandler(req, res, next) {
       });
     }
 
-    const receivable = await createReceivableFromRequest(requestId, storeId, userId, {
+    const { receivable, initialPaymentId } = await createReceivableFromRequest(requestId, storeId, userId, {
       description: description?.trim() || undefined,
       customerName: customerName !== undefined ? customerName : undefined,
       customerPhone: customerPhone !== undefined ? customerPhone : undefined,
       amount: amountNum,
       initialPayment,
     });
+
+    // Si se subió comprobante para el abono inicial, crear adjunto
+    if (req.file && req.file.buffer && initialPaymentId) {
+      await createAttachment({
+        receivableId: receivable.id,
+        paymentId: initialPaymentId,
+        file: req.file,
+        createdBy: userId,
+      });
+    }
 
     return res.status(201).json({
       success: true,
@@ -583,7 +612,7 @@ export async function getReceivablePaymentsHandler(req, res, next) {
 
 /**
  * POST /api/receivables/:id/payments
- * Registrar un abono. Body: { storeId, amount, currency?, notes? }
+ * Registrar un abono. Body/multipart: { storeId, amount, currency?, notes? }, opcional: file (comprobante)
  */
 export async function createReceivablePaymentHandler(req, res, next) {
   try {
@@ -612,6 +641,17 @@ export async function createReceivablePaymentHandler(req, res, next) {
       notes: notes || undefined,
     }, userId);
 
+    // Si se subió un comprobante, crear adjunto vinculado al último abono
+    if (req.file && req.file.buffer && result.payments && result.payments.length > 0) {
+      const lastPayment = result.payments[result.payments.length - 1];
+      await createAttachment({
+        receivableId: id,
+        paymentId: lastPayment.id,
+        file: req.file,
+        createdBy: userId,
+      });
+    }
+
     return res.status(201).json({
       success: true,
       receivable: result.receivable,
@@ -636,7 +676,7 @@ export async function createReceivablePaymentHandler(req, res, next) {
 }
 
 /**
- * Construye el detalle de productos para el template recordatorio_estado_de_cuenta (body {{4}}).
+ * Construye el detalle de productos para el template notificacion_pago_pendiente (body {{4}}).
  * Formato por línea: cantidad nombre ($precio). Nombre máx 20 caracteres. Total máx ~900 chars.
  */
 async function buildProductDetailsForTemplate(receivables, storeId) {
@@ -679,11 +719,11 @@ async function buildProductDetailsForTemplate(receivables, storeId) {
 
 /**
  * POST /api/receivables/send-reminders
- * Envía recordatorios por WhatsApp usando el template recordatorio_estado_de_cuenta.
+ * Envía recordatorios por WhatsApp usando el template notificacion_pago_pendiente.
  * Body: { storeId, recipients: [ { phone, receivableIds: string[] } ] }
- * Template: recordatorio_estado_de_cuenta
+ * Template: notificacion_pago_pendiente
  *   Header: {{1}} nombre de la tienda
- *   Body: {{1}} nombre cliente, {{2}} nombre tienda, {{3}} teléfono tienda, {{4}} detalle productos (cantidad nombre ($precio)), {{5}} total a pagar, {{6}} nombre tienda, {{7}} teléfono tienda, {{8}} teléfono tienda
+ *   Body: {{1}} nombre del cliente que debe, {{2}} nombre de la tienda, {{3}} monto que debe, {{4}} detalle de lo que debe, {{5}} número de teléfono de la tienda
  */
 export async function sendReceivableRemindersHandler(req, res, next) {
   try {
@@ -764,17 +804,14 @@ export async function sendReceivableRemindersHandler(req, res, next) {
         const productDetails = await buildProductDetailsForTemplate(receivables, storeId);
 
         const bodyParams = [
-          customerName,       // {{1}} nombre del cliente
+          customerName,       // {{1}} nombre del cliente que debe
           storeName,          // {{2}} nombre de la tienda
-          storePhoneStr,      // {{3}} teléfono de la tienda
-          productDetails,     // {{4}} detalle productos (cantidad nombre ($precio))
-          totalAmountUsd,     // {{5}} total a pagar
-          storeName,          // {{6}} nombre de la tienda
-          storePhoneStr,      // {{7}} teléfono de la tienda
-          storePhoneStr,      // {{8}} teléfono de la tienda
+          totalAmountUsd,     // {{3}} monto que debe
+          productDetails,     // {{4}} detalle de lo que debe
+          storePhoneStr,      // {{5}} número de teléfono de la tienda
         ];
 
-        const templateName = 'recordatorio_estado_de_cuenta';
+        const templateName = 'notificacion_pago_pendiente';
         const sendResult = await sendWhatsAppTemplate(phoneStr, templateName, bodyParams, 'es', headerParams);
         sent++;
         try {
@@ -786,6 +823,17 @@ export async function sendReceivableRemindersHandler(req, res, next) {
         } catch (logErr) {
           console.error('[whatsapp_message_logs] Error guardando registro:', logErr.message);
         }
+        for (const recId of ids) {
+          try {
+            await insertReceivableLog(recId, userId, 'reminder_sent', {
+              phone: phoneStr,
+              template: templateName,
+              messageId: sendResult?.messageId ?? null,
+            });
+          } catch (logErr) {
+            console.error('[receivables_logs] Error guardando log reminder_sent:', logErr.message);
+          }
+        }
       } catch (err) {
         failed.push({
           index: i,
@@ -796,7 +844,7 @@ export async function sendReceivableRemindersHandler(req, res, next) {
           await query(
             `INSERT INTO whatsapp_message_logs (store_id, phone, template_name, receivable_ids, message_id, success, error_message)
              VALUES ($1, $2, $3, $4::jsonb, NULL, false, $5)`,
-            [storeId, phoneStr, 'recordatorio_estado_de_cuenta', JSON.stringify(ids), err?.message ?? 'Error al enviar']
+            [storeId, phoneStr, 'notificacion_pago_pendiente', JSON.stringify(ids), err?.message ?? 'Error al enviar']
           );
         } catch (logErr) {
           console.error('[whatsapp_message_logs] Error guardando registro de fallo:', logErr.message);
@@ -875,6 +923,100 @@ export async function bulkUpdateReceivableStatusHandler(req, res, next) {
       skipped,
       total: receivables.length,
     });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * GET /api/receivables/:id/attachments
+ * Listar adjuntos (comprobantes) de una cuenta por cobrar. Query: storeId
+ */
+export async function getReceivableAttachmentsHandler(req, res, next) {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+    const { storeId } = req.query;
+
+    if (!storeId) {
+      return res.status(400).json({ success: false, error: 'storeId es requerido' });
+    }
+
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
+    }
+
+    const attachments = await getAttachmentsByReceivableId(id, storeId);
+    return res.json({ success: true, attachments });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/receivables/:id/attachments
+ * Subir comprobante. Multipart: file, body: storeId, paymentId? (opcional, para vincular a un abono)
+ */
+export async function createReceivableAttachmentHandler(req, res, next) {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+    const storeId = req.body?.storeId;
+    const paymentId = req.body?.paymentId || null;
+
+    if (!storeId) {
+      return res.status(400).json({ success: false, error: 'storeId es requerido' });
+    }
+
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
+    }
+
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ success: false, error: 'Debes subir un archivo (imagen o PDF)' });
+    }
+
+    const attachment = await createAttachment({
+      receivableId: id,
+      paymentId: paymentId || null,
+      file: req.file,
+      createdBy: userId,
+    });
+
+    return res.status(201).json({ success: true, attachment });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * GET /api/receivables/:id/attachments/:attachmentId/download
+ * Obtener URL firmada para descargar el archivo. Query: storeId
+ * Retorna { downloadUrl } para que el frontend abra la URL (no requiere auth la URL firmada)
+ */
+export async function getReceivableAttachmentDownloadHandler(req, res, next) {
+  try {
+    const userId = req.user.id;
+    const { id, attachmentId } = req.params;
+    const { storeId } = req.query;
+
+    if (!storeId) {
+      return res.status(400).json({ success: false, error: 'storeId es requerido' });
+    }
+
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
+    }
+
+    const url = await getAttachmentDownloadUrl(attachmentId, id, storeId);
+    if (!url) {
+      return res.status(404).json({ success: false, error: 'Archivo no encontrado' });
+    }
+
+    return res.json({ success: true, downloadUrl: url });
   } catch (error) {
     next(error);
   }

@@ -277,7 +277,9 @@ export async function runReceivableRemindersJob() {
           const ids = [...new Set(createdForUser.map((c) => c.receivableId))];
           const details = await getReceivableDetailsForMessage(ids);
 
-          // Construir variables para template recordatorio_de_cuentas_por_cobrar
+          // Construir variables para template recordatorio_de_cuentas_por_cobrar_pendientes
+          const storeNames = [...new Set(details.map((d) => d.store_name).filter(Boolean))];
+          const nombreTienda = storeNames.length === 1 ? storeNames[0] : storeNames.length > 1 ? 'Tus tiendas' : 'Tienda';
           const cantidadCuentas = String(details.length || 0);
 
           const lines = details.map((d) => {
@@ -297,14 +299,11 @@ export async function runReceivableRemindersJob() {
               .map(([curr, sum]) => `${curr} ${sum.toFixed(2)}`)
               .join(' | ') || '0';
 
-          // Template en Meta: recordatorio_de_cuentas_por_cobrar (idioma en)
-          // Body:
-          // Tienes {{1}} cuenta(s) que requieren seguimiento:
-          // {{2}}
-          // Total por cobrar: {{3}}
-          const bodyParams = [cantidadCuentas, listaDeClientes, montoTotal];
+          // Template en Meta: recordatorio_de_cuentas_por_cobrar_pendientes
+          // Body: {{1}} nombre tienda, {{2}} cantidad_cuentas, {{3}} lista_de_clientes, {{4}} monto_total
+          const bodyParams = [nombreTienda, cantidadCuentas, listaDeClientes, montoTotal];
 
-          await sendWhatsAppTemplate(phone, 'recordatorio_de_cuentas_por_cobrar', bodyParams, 'en');
+          await sendWhatsAppTemplate(phone, 'recordatorio_de_cuentas_por_cobrar_pendientes', bodyParams, 'es');
           whatsappSent++;
         } catch (err) {
           console.error('[Recordatorios] Error enviando WhatsApp al usuario', u.id, err?.message || err);

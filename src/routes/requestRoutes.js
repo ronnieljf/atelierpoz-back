@@ -50,13 +50,13 @@ const createRequestValidation = [
   body('customerPhone')
     .optional()
     .trim()
-    .isLength({ max: 20 })
-    .withMessage('El teléfono no puede exceder 20 caracteres'),
+    .isLength({ max: 50 })
+    .withMessage('El teléfono no puede exceder 50 caracteres'),
   body('customerEmail')
     .optional()
     .trim()
-    .isEmail()
-    .withMessage('El email debe tener un formato válido'),
+    .isLength({ max: 255 })
+    .withMessage('El email no puede exceder 255 caracteres'),
 ];
 router.post('/', createRequestValidation, createRequestHandler);
 

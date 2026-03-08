@@ -111,6 +111,17 @@ async function generateFileUrl(fileName) {
 }
 
 /**
+ * Generar URL firmada para descargar un archivo por su key (para attachments, etc.)
+ * @param {string} fileKey - Key del archivo en R2
+ * @param {number} [expiresIn=3600] - Segundos hasta expiración (default 1 hora)
+ * @returns {Promise<string>} URL firmada
+ */
+export async function getSignedDownloadUrl(fileKey, expiresIn = 3600) {
+  const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: fileKey });
+  return getSignedUrl(s3Client, command, { expiresIn });
+}
+
+/**
  * Redimensiona y comprime una imagen a WebP si supera el límite de tamaño.
  * No aplica a SVG. Devuelve { buffer, mimeType, originalName } listos para subir.
  * @param {Buffer} buffer

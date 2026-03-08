@@ -30,7 +30,6 @@ import clientRecurringReminderRoutes from './routes/clientRecurringReminderRoute
 import cron from 'node-cron';
 import { flowPost } from './controllers/flowController.js';
 import { runReceivableRemindersJob } from './services/reminderService.js';
-import { runReceivableInvitationJob } from './services/receivableInvitationJob.js';
 
 // Cargar variables de entorno
 dotenv.config();
@@ -106,19 +105,6 @@ function runReminderJob() {
     });
 }
 
-// Job invitación cuentas por cobrar (diario 11:00)
-const INVITATION_JOB_CRON = process.env.INVITATION_JOB_CRON || '0 11 * * *';
-
-function runInvitationJob() {
-  runReceivableInvitationJob()
-    .then((result) => {
-      console.log(`[Invitación CPC] Job ejecutado: ${result.storesChecked} tiendas revisadas, ${result.invitationsSent} invitaciones enviadas`);
-    })
-    .catch((err) => {
-      console.error('[Invitación CPC] Error en job:', err?.message || err);
-    });
-}
-
 // Iniciar servidor
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
@@ -128,12 +114,5 @@ app.listen(PORT, () => {
     console.log(`[Recordatorios] Cron programado: ${REMINDER_JOB_CRON}`);
   } else {
     console.warn(`[Recordatorios] Cron inválido "${REMINDER_JOB_CRON}", job no programado. Usa REMINDER_JOB_CRON (ej: 0 9 * * *).`);
-  }
-  //runInvitationJob();
-  if (cron.validate(INVITATION_JOB_CRON)) {
-    cron.schedule(INVITATION_JOB_CRON, runInvitationJob);
-    console.log(`[Invitación CPC] Cron programado: ${INVITATION_JOB_CRON}`);
-  } else {
-    console.warn(`[Invitación CPC] Cron inválido "${INVITATION_JOB_CRON}", job no programado. Usa INVITATION_JOB_CRON (ej: 0 11 * * *).`);
   }
 });
