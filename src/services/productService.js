@@ -1331,8 +1331,23 @@ export async function searchProductsForPOS(storeId, search, limit = 30) {
           }
         }
         if (stock > 0) {
+          let imageUrl = null;
           const comboImages = Array.isArray(combo.images) ? combo.images : [];
-          const imageUrl = (comboImages[0] || productImageUrl) || null;
+          if (comboImages.length > 0) {
+            imageUrl = comboImages[0];
+          } else {
+            for (const attr of attributes) {
+              const variantId = selections[attr.id];
+              if (variantId && attr.variants && Array.isArray(attr.variants)) {
+                const v = attr.variants.find((x) => x.id === variantId);
+                if (v?.images && Array.isArray(v.images) && v.images.length > 0) {
+                  imageUrl = v.images[0];
+                  break;
+                }
+              }
+            }
+            if (!imageUrl) imageUrl = productImageUrl;
+          }
           out.push({
             productId: row.id,
             combinationId: comboId,
@@ -1470,8 +1485,23 @@ export async function getPOSProductsByKeys(storeId, keys) {
             }
           }
         }
+        let imageUrl = null;
         const comboImages = Array.isArray(combo.images) ? combo.images : [];
-        const imageUrl = (comboImages[0] || productImageUrl) || null;
+        if (comboImages.length > 0) {
+          imageUrl = comboImages[0];
+        } else {
+          for (const attr of attributes) {
+            const variantId = selections[attr.id];
+            if (variantId && attr.variants && Array.isArray(attr.variants)) {
+              const v = attr.variants.find((x) => x.id === variantId);
+              if (v?.images && Array.isArray(v.images) && v.images.length > 0) {
+                imageUrl = v.images[0];
+                break;
+              }
+            }
+          }
+          if (!imageUrl) imageUrl = productImageUrl;
+        }
         out.push({
           productId: row.id,
           combinationId: comboId,
@@ -1604,8 +1634,23 @@ export async function getProductPOSOptions(storeId, productId) {
         }
       }
     }
+    let imageUrl = null;
     const comboImages = Array.isArray(combo.images) ? combo.images : [];
-    const imageUrl = (comboImages[0] || productImageUrl) || null;
+    if (comboImages.length > 0) {
+      imageUrl = comboImages[0];
+    } else {
+      for (const attr of attributes) {
+        const variantId = selections[attr.id];
+        if (variantId && attr.variants && Array.isArray(attr.variants)) {
+          const v = attr.variants.find((x) => x.id === variantId);
+          if (v?.images && Array.isArray(v.images) && v.images.length > 0) {
+            imageUrl = v.images[0];
+            break;
+          }
+        }
+      }
+      if (!imageUrl) imageUrl = productImageUrl;
+    }
     out.push({
       productId: row.id,
       combinationId: comboId,
