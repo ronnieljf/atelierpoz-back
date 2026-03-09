@@ -15,8 +15,11 @@ import {
   resetPasswordHandler,
   getOnboardingSurvey,
   saveOnboardingSurvey,
+  getAllUsersHandler,
+  createUserHandler,
+  updateUserHandler,
 } from '../controllers/authController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { authenticateToken, requireAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -95,6 +98,16 @@ router.get('/verify', authenticateToken, verifyToken);
  * Obtener información del usuario actual
  */
 router.get('/me', authenticateToken, getMe);
+
+/**
+ * Rutas de administración de usuarios (solo para admins)
+ * GET    /api/auth/users        - Listar todos los usuarios
+ * POST   /api/auth/users        - Crear usuario
+ * PUT    /api/auth/users/:id    - Actualizar usuario
+ */
+router.get('/users', authenticateToken, requireAdmin, getAllUsersHandler);
+router.post('/users', authenticateToken, requireAdmin, createUserHandler);
+router.put('/users/:id', authenticateToken, requireAdmin, updateUserHandler);
 
 /**
  * PUT /api/auth/me/password

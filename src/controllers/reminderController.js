@@ -66,3 +66,16 @@ export async function dismissNotification(req, res, next) {
     next(error);
   }
 }
+
+/**
+ * POST /api/reminders/run-now — ejecutar el envío de recordatorios para el usuario actual.
+ */
+export async function runNow(req, res, next) {
+  try {
+    const userId = req.user.id;
+    const result = await reminderService.runReceivableRemindersJobForUser(userId);
+    res.json({ success: true, result });
+  } catch (error) {
+    next(error);
+  }
+}

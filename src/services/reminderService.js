@@ -7,6 +7,7 @@
 
 import { query } from '../config/database.js';
 import { getUserById } from './authService.js';
+import { sendEmail } from './emailService.js';
 import { getUserStores } from './storeService.js';
 import { getPendingReceivablesWithReferenceDates } from './receivableService.js';
 import { sendWhatsAppText, sendWhatsAppTemplate } from './whatsappService.js';
@@ -27,9 +28,13 @@ export async function getReminderSettings(userId) {
   if (!user) return null;
   return {
     reminders_enabled: Boolean(user.reminders_enabled),
-    reminder_days_after_creation: user.reminder_days_after_creation ?? 30,
-    reminder_days_after_last_payment: user.reminder_days_after_last_payment ?? 15,
-    reminder_interval_days: user.reminder_interval_days ?? 7,
+    // Usamos reminder_days_after_creation como día del mes (1-31)
+    reminder_days_after_creation: user.reminder_days_after_creation ?? 1,
+    // Usamos estos campos como flags 0/1 para los canales
+    reminder_days_after_last_payment: user.reminder_days_after_last_payment ?? 0,
+    reminder_interval_days: user.reminder_interval_days ?? 0,
+    // Días mínimos de antigüedad de la cuenta para incluirla en el reporte
+    reminder_min_days_age: user.reminder_min_days_age ?? 30,
   };
 }
 
@@ -248,69 +253,340 @@ async function getReceivableDetailsForMessage(receivableIds) {
  * @returns {Promise<{ usersProcessed: number, remindersCreated: number, whatsappSent: number }>}
  */
 export async function runReceivableRemindersJob() {
+  // Job mensual: para cada usuario con reminders_enabled,
+  // si hoy es el día configurado, enviar un reporte con las
+  // cuentas por cobrar con más de 30 días de creadas.
   const usersResult = await query(
-    `SELECT id, reminder_days_after_creation, reminder_days_after_last_payment, reminder_interval_days FROM users WHERE reminders_enabled = true`,
+    `SELECT id,
+            email,
+            reminders_enabled,
+            reminder_days_after_creation,
+            reminder_days_after_last_payment,
+            reminder_interval_days,
+            reminder_min_days_age
+     FROM users
+     WHERE reminders_enabled = true`,
     []
   );
-  let remindersCreated = 0;
-  let whatsappSent = 0;
+
+  let usersProcessed = 0;
+  let reportsSentWhatsApp = 0;
+  let reportsSentEmail = 0;
+
+  const now = new Date();
+  const currentDay = now.getUTCDate();
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getUTCDate();
 
   for (const u of usersResult.rows) {
-    const due = await getReceivablesDueForReminder(u.id);
-    const createdForUser = [];
+    usersProcessed++;
 
-    for (const item of due) {
-      try {
-        await recordReminderSent(item.receivableId, item.reminderType, item.referenceDate);
-        await createReminderNotification(u.id, item.storeId, item.receivableId, item.reminderType);
-        remindersCreated++;
-        createdForUser.push(item);
-      } catch (err) {
-        console.error('Error creating reminder for receivable', item.receivableId, item.reminderType, err.message);
+    const rawDay = Number(u.reminder_days_after_creation) || 1;
+    const configuredDay = Math.max(1, Math.min(31, rawDay));
+    const effectiveDay = Math.min(configuredDay, daysInMonth);
+
+    const sendEmailFlag = (Number(u.reminder_days_after_last_payment) || 0) > 0;
+    const sendPhoneFlag = (Number(u.reminder_interval_days) || 0) > 0;
+
+    if (currentDay !== effectiveDay) {
+      continue;
+    }
+
+    if (!sendEmailFlag && !sendPhoneFlag) {
+      continue;
+    }
+
+    const stores = await getUserStores(u.id);
+    if (!stores.length) continue;
+
+    const minDays = Math.max(1, Math.min(365, Number(u.reminder_min_days_age) || 30));
+    const thresholdDate = new Date(now);
+    thresholdDate.setUTCDate(thresholdDate.getUTCDate() - minDays);
+    const threshold = thresholdDate.toISOString().slice(0, 10);
+
+    const receivableIds = [];
+
+    for (const store of stores) {
+      const receivables = await getPendingReceivablesWithReferenceDates(store.id);
+      for (const rec of receivables) {
+        const createdDate =
+          rec.created_at && typeof rec.created_at === 'string'
+            ? rec.created_at.slice(0, 10)
+            : rec.created_at?.toISOString?.().slice(0, 10) ?? null;
+        if (!createdDate) continue;
+        if (createdDate <= threshold) {
+          receivableIds.push(rec.id);
+          // Creamos también una notificación in-app sencilla
+          try {
+            await createReminderNotification(u.id, rec.store_id, rec.id, REMINDER_TYPES.REPEAT);
+          } catch (err) {
+            console.error('Error creating monthly reminder notification for receivable', rec.id, err?.message || err);
+          }
+        }
       }
     }
 
-    if (createdForUser.length > 0) {
+    if (!receivableIds.length) continue;
+
+    const details = await getReceivableDetailsForMessage([...new Set(receivableIds)]);
+    if (!details.length) continue;
+
+    const storeNames = [...new Set(details.map((d) => d.store_name).filter(Boolean))];
+    const nombreTienda = storeNames.length === 1 ? storeNames[0] : storeNames.length > 1 ? 'Tus tiendas' : 'Tienda';
+    const cantidadCuentas = String(details.length || 0);
+
+    const lines = details.map((d) => {
+      const tel = d.customer_phone ? ` Tel: ${d.customer_phone}` : '';
+      const base = `${d.customer_name} - ${d.amount.toFixed(2)} ${d.currency} (#${d.receivable_number})${tel}`;
+      // Si hay más de una tienda, incluimos el nombre de la tienda en cada línea.
+      return storeNames.length > 1 ? `${d.store_name}: ${base}` : base;
+    });
+
+    const totalsByCurrency = details.reduce((acc, d) => {
+      const c = d.currency || 'USD';
+      acc[c] = (acc[c] || 0) + d.amount;
+      return acc;
+    }, {});
+    const montoTotal =
+      Object.entries(totalsByCurrency)
+        .map(([curr, sum]) => `${curr} ${sum.toFixed(2)}`)
+        .join(' | ') || '0';
+
+    // Enviar por WhatsApp si está habilitado y hay teléfono
+    if (sendPhoneFlag) {
       const phone = await getUserPhoneForReminders(u.id);
       if (phone) {
         try {
-          const ids = [...new Set(createdForUser.map((c) => c.receivableId))];
-          const details = await getReceivableDetailsForMessage(ids);
-
-          // Construir variables para template recordatorio_de_cuentas_por_cobrar_pendientes
-          const storeNames = [...new Set(details.map((d) => d.store_name).filter(Boolean))];
-          const nombreTienda = storeNames.length === 1 ? storeNames[0] : storeNames.length > 1 ? 'Tus tiendas' : 'Tienda';
-          const cantidadCuentas = String(details.length || 0);
-
-          const lines = details.map((d) => {
-            const tel = d.customer_phone ? ` Tel: ${d.customer_phone}` : '';
-            return `${d.store_name}: ${d.customer_name} - ${d.amount.toFixed(2)} ${d.currency} (#${d.receivable_number})${tel}`;
-          });
-          // WhatsApp no permite \n en params, se transforman en espacios en sendWhatsAppTemplate.
-          const listaDeClientes = lines.join(' • ');
-
-          const totalsByCurrency = details.reduce((acc, d) => {
-            const c = d.currency || 'USD';
-            acc[c] = (acc[c] || 0) + d.amount;
-            return acc;
-          }, {});
-          const montoTotal =
-            Object.entries(totalsByCurrency)
-              .map(([curr, sum]) => `${curr} ${sum.toFixed(2)}`)
-              .join(' | ') || '0';
-
-          // Template en Meta: recordatorio_de_cuentas_por_cobrar_pendientes
-          // Body: {{1}} nombre tienda, {{2}} cantidad_cuentas, {{3}} lista_de_clientes, {{4}} monto_total
+          const listaDeClientes = lines.map((l) => `• ${l}`).join('\n');
           const bodyParams = [nombreTienda, cantidadCuentas, listaDeClientes, montoTotal];
-
-          await sendWhatsAppTemplate(phone, 'recordatorio_de_cuentas_por_cobrar_pendientes', bodyParams, 'es');
-          whatsappSent++;
+          await sendWhatsAppTemplate(
+            phone,
+            'recordatorio_de_cuentas_por_cobrar_pendientes',
+            bodyParams,
+            'es',
+            null,
+            null
+          );
+          reportsSentWhatsApp++;
         } catch (err) {
-          console.error('[Recordatorios] Error enviando WhatsApp al usuario', u.id, err?.message || err);
+          console.error('[Recordatorios] Error enviando WhatsApp mensual al usuario', u.id, err?.message || err);
+        }
+      }
+    }
+
+    // Enviar por correo si está habilitado y hay email
+    if (sendEmailFlag && u.email) {
+      try {
+        const subject = 'Recordatorio de Cuentas por Cobrar';
+        const textLines = [
+          `Hola ${nombreTienda},`,
+          '',
+          `Tienes ${cantidadCuentas} cuenta(s) que requieren seguimiento:`,
+          '',
+          ...lines.map((l) => `• ${l}`),
+          '',
+          `📊 Resumen financiero:`,
+          `Total por cobrar: ${montoTotal}`,
+          '',
+          'Mantengamos el flujo de caja saludable. ¡Mucho éxito con el seguimiento hoy!',
+        ];
+        const text = textLines.join('\n');
+        const result = await sendEmail({
+          to: u.email,
+          subject,
+          text,
+          html: undefined,
+        });
+        if (result.success) {
+          reportsSentEmail++;
+        }
+      } catch (err) {
+        console.error('[Recordatorios] Error enviando email mensual al usuario', u.id, err?.message || err);
+      }
+    }
+  }
+
+  return {
+    usersProcessed,
+    remindersCreated: 0,
+    whatsappSent: reportsSentWhatsApp,
+    emailSent: reportsSentEmail,
+  };
+}
+
+/**
+ * Ejecutar el job de recordatorios solo para un usuario concreto (ejecución manual).
+ * Respeta la configuración del usuario (día del mes, canales, días mínimos).
+ * @param {string} userId
+ */
+export async function runReceivableRemindersJobForUser(userId) {
+  const now = new Date();
+  const currentDay = now.getUTCDate();
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getUTCDate();
+
+  const { rows } = await query(
+    `SELECT id,
+            email,
+            reminders_enabled,
+            reminder_days_after_creation,
+            reminder_days_after_last_payment,
+            reminder_interval_days,
+            reminder_min_days_age
+     FROM users
+     WHERE id = $1`,
+    [userId]
+  );
+
+  if (!rows.length) {
+    return { usersProcessed: 0, remindersCreated: 0, whatsappSent: 0, emailSent: 0 };
+  }
+
+  const u = rows[0];
+  if (!u.reminders_enabled) {
+    return { usersProcessed: 0, remindersCreated: 0, whatsappSent: 0, emailSent: 0 };
+  }
+
+  const rawDay = Number(u.reminder_days_after_creation) || 1;
+  const configuredDay = Math.max(1, Math.min(31, rawDay));
+  const effectiveDay = Math.min(configuredDay, daysInMonth);
+
+  const sendEmailFlag = (Number(u.reminder_days_after_last_payment) || 0) > 0;
+  const sendPhoneFlag = (Number(u.reminder_interval_days) || 0) > 0;
+
+  if (!sendEmailFlag && !sendPhoneFlag) {
+    return { usersProcessed: 1, remindersCreated: 0, whatsappSent: 0, emailSent: 0 };
+  }
+
+  // Permitir ejecutar manualmente aunque hoy no sea el día exacto, pero
+  // respetando el resto de filtros (antigüedad, canales).
+  // Si quisieras forzar a que solo funcione el día configurado, descomenta:
+  // if (currentDay !== effectiveDay) return { usersProcessed: 1, remindersCreated: 0, whatsappSent: 0, emailSent: 0 };
+
+  const stores = await getUserStores(u.id);
+  if (!stores.length) {
+    return { usersProcessed: 1, remindersCreated: 0, whatsappSent: 0, emailSent: 0 };
+  }
+
+  const minDays = Math.max(1, Math.min(365, Number(u.reminder_min_days_age) || 30));
+  const thresholdDate = new Date(now);
+  thresholdDate.setUTCDate(thresholdDate.getUTCDate() - minDays);
+  const threshold = thresholdDate.toISOString().slice(0, 10);
+
+  const receivableIds = [];
+
+  for (const store of stores) {
+    const receivables = await getPendingReceivablesWithReferenceDates(store.id);
+    for (const rec of receivables) {
+      const createdDate =
+        rec.created_at && typeof rec.created_at === 'string'
+          ? rec.created_at.slice(0, 10)
+          : rec.created_at?.toISOString?.().slice(0, 10) ?? null;
+      if (!createdDate) continue;
+      if (createdDate <= threshold) {
+        receivableIds.push(rec.id);
+        try {
+          await createReminderNotification(u.id, rec.store_id, rec.id, REMINDER_TYPES.REPEAT);
+        } catch (err) {
+          console.error(
+            'Error creating monthly reminder notification for receivable (manual run)',
+            rec.id,
+            err?.message || err
+          );
         }
       }
     }
   }
 
-  return { usersProcessed: usersResult.rows.length, remindersCreated, whatsappSent };
+  if (!receivableIds.length) {
+    return { usersProcessed: 1, remindersCreated: 0, whatsappSent: 0, emailSent: 0 };
+  }
+
+  const details = await getReceivableDetailsForMessage([...new Set(receivableIds)]);
+  if (!details.length) {
+    return { usersProcessed: 1, remindersCreated: 0, whatsappSent: 0, emailSent: 0 };
+  }
+
+  const storeNames = [...new Set(details.map((d) => d.store_name).filter(Boolean))];
+  const nombreTienda = storeNames.length === 1 ? storeNames[0] : storeNames.length > 1 ? 'Tus tiendas' : 'Tienda';
+  const cantidadCuentas = String(details.length || 0);
+
+  const lines = details.map((d) => {
+    const tel = d.customer_phone ? ` Tel: ${d.customer_phone}` : '';
+    const base = `${d.customer_name} - ${d.amount.toFixed(2)} ${d.currency} (#${d.receivable_number})${tel}`;
+    return storeNames.length > 1 ? `${d.store_name}: ${base}` : base;
+  });
+
+  const totalsByCurrency = details.reduce((acc, d) => {
+    const c = d.currency || 'USD';
+    acc[c] = (acc[c] || 0) + d.amount;
+    return acc;
+  }, {});
+  const montoTotal =
+    Object.entries(totalsByCurrency)
+      .map(([curr, sum]) => `${curr} ${sum.toFixed(2)}`)
+      .join(' | ') || '0';
+
+  let whatsappSent = 0;
+  let emailSent = 0;
+
+  if (sendPhoneFlag) {
+    const phone = await getUserPhoneForReminders(u.id);
+    if (phone) {
+      try {
+        const listaDeClientes = lines.map((l) => `• ${l}`).join('\n');
+        const bodyParams = [nombreTienda, cantidadCuentas, listaDeClientes, montoTotal];
+        await sendWhatsAppTemplate(
+          phone,
+          'recordatorio_de_cuentas_por_cobrar_pendientes',
+          bodyParams,
+          'es',
+          null,
+          'https://atelierpoz.com/admin'
+        );
+        whatsappSent++;
+      } catch (err) {
+        console.error('[Recordatorios] Error enviando WhatsApp mensual (manual) al usuario', u.id, err?.message || err);
+      }
+    }
+  }
+
+  if (sendEmailFlag && u.email) {
+    try {
+      const subject = 'Recordatorio de Cuentas por Cobrar';
+      const textLines = [
+        `Hola ${nombreTienda},`,
+        '',
+        `Tienes ${cantidadCuentas} cuenta(s) que requieren seguimiento:`,
+        '',
+        ...lines.map((l) => `• ${l}`),
+        '',
+        `📊 Resumen financiero:`,
+        `Total por cobrar: ${montoTotal}`,
+        '',
+        'Mantengamos el flujo de caja saludable. ¡Mucho éxito con el seguimiento hoy!',
+      ];
+      const text = textLines.join('\n');
+      const result = await sendEmail({
+        to: u.email,
+        subject,
+        text,
+        html: undefined,
+      });
+      if (result.success) {
+        emailSent++;
+      }
+    } catch (err) {
+      console.error('[Recordatorios] Error enviando email mensual (manual) al usuario', u.id, err?.message || err);
+    }
+  }
+
+  return {
+    usersProcessed: 1,
+    remindersCreated: receivableIds.length,
+    whatsappSent,
+    emailSent,
+  };
 }

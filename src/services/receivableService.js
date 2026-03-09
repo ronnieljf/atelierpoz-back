@@ -6,6 +6,16 @@
 import { query, getClient } from '../config/database.js';
 import { updateRequestStatus, getRequestById, decreaseStockForRequest, increaseStockForRequest, updateRequestItemsForReceivable } from './requestService.js';
 
+function toIsoDateString(value) {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  const s = String(value);
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const d = new Date(s);
+  if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  return s;
+}
+
 /**
  * Formatear fila de BD a objeto para API (camelCase)
  */
@@ -13,6 +23,8 @@ function formatReceivable(row) {
   if (!row) return null;
   const itemsCount =
     row.items_count != null && !Number.isNaN(parseInt(row.items_count, 10)) ? parseInt(row.items_count, 10) : null;
+  const productNames =
+    typeof row.product_names === 'string' && row.product_names.trim().length > 0 ? row.product_names.trim() : null;
   return {
     id: row.id,
     storeId: row.store_id,
@@ -32,8 +44,11 @@ function formatReceivable(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     storeName: row.store_name,
+    invoiceNumber: row.invoice_number || null,
+    dueDate: toIsoDateString(row.due_date),
     itemsCount,
     orderNumber: row.order_number != null ? parseInt(row.order_number, 10) : null,
+    productNames,
   };
 }
 
@@ -52,6 +67,8 @@ export async function createReceivable(data) {
     currency = 'USD',
     requestId = null,
     initialPayment = null,
+    invoiceNumber = null,
+    dueDate = null,
   } = data;
 
   const amountNum = parseFloat(amount);
@@ -73,11 +90,11 @@ export async function createReceivable(data) {
     const result = await client.query(
       `INSERT INTO receivables (
         store_id, created_by, customer_name, customer_phone, description,
-        amount, currency, status, request_id, receivable_number
+        amount, currency, status, request_id, receivable_number, invoice_number, due_date
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11::date)
       RETURNING id, store_id, receivable_number, created_by, customer_name, customer_phone, description,
-        amount, currency, status, request_id, paid_at, created_at, updated_at`,
+        amount, currency, status, request_id, paid_at, created_at, updated_at, invoice_number, due_date`,
       [
         storeId,
         createdBy,
@@ -88,6 +105,8 @@ export async function createReceivable(data) {
         currency || 'USD',
         requestId || null,
         receivableNumber,
+        invoiceNumber || null,
+        dueDate ? toIsoDateString(dueDate) : null,
       ]
     );
     row = result.rows[0];
@@ -211,6 +230,8 @@ export async function createReceivableFromRequest(requestId, storeId, createdBy,
     currency: r.currency || 'USD',
     requestId: r.id,
     initialPayment: options.initialPayment,
+    invoiceNumber: options.invoiceNumber ?? null,
+    dueDate: options.dueDate ?? null,
   });
 }
 
@@ -247,7 +268,7 @@ export async function getPendingTotalByStore(storeId) {
  * @param {Object} options - status?, limit?, offset?, dateFrom? (YYYY-MM-DD), dateTo? (YYYY-MM-DD, inclusive)
  */
 export async function getReceivablesByStore(storeId, options = {}) {
-  const { status, limit, offset, dateFrom, dateTo, search } = options;
+  const { status, limit, offset, dateFrom, dateTo, search, invoiceNumber, source } = options;
 
   let whereClause = 'WHERE r.store_id = $1';
   const params = [storeId];
@@ -255,9 +276,46 @@ export async function getReceivablesByStore(storeId, options = {}) {
 
   const searchTerm = typeof search === 'string' ? search.trim() : '';
   if (searchTerm) {
-    whereClause += ` AND (r.customer_name ILIKE $${paramIdx} OR r.customer_phone ILIKE $${paramIdx} OR r.receivable_number::text ILIKE $${paramIdx})`;
-    params.push(`%${searchTerm}%`);
+    const likeParam = `%${searchTerm}%`;
+    whereClause += ` AND (
+      r.customer_name ILIKE $${paramIdx}
+      OR r.customer_phone ILIKE $${paramIdx}
+      OR r.receivable_number::text ILIKE $${paramIdx}
+      OR EXISTS (
+        SELECT 1
+        FROM requests req
+        WHERE req.id = r.request_id
+          AND req.store_id = r.store_id
+          AND jsonb_typeof(req.items) = 'array'
+          AND EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(req.items) AS elem
+            WHERE
+              elem->>'productName' ILIKE $${paramIdx}
+              OR EXISTS (
+                SELECT 1
+                FROM products p
+                WHERE p.id = (elem->>'productId')::uuid
+                  AND p.store_id = r.store_id
+                  AND (p.name ILIKE $${paramIdx} OR p.sku ILIKE $${paramIdx})
+              )
+          )
+      )
+    )`;
+    params.push(likeParam);
     paramIdx++;
+  }
+
+  if (invoiceNumber && typeof invoiceNumber === 'string' && invoiceNumber.trim() !== '') {
+    whereClause += ` AND r.invoice_number ILIKE $${paramIdx}`;
+    params.push(`%${invoiceNumber.trim()}%`);
+    paramIdx++;
+  }
+
+  if (source === 'manual') {
+    whereClause += ' AND r.request_id IS NULL';
+  } else if (source === 'request') {
+    whereClause += ' AND r.request_id IS NOT NULL';
   }
 
   if (status) {
@@ -295,11 +353,24 @@ export async function getReceivablesByStore(storeId, options = {}) {
 
   let sql = `
     SELECT r.id, r.store_id, r.receivable_number, r.created_by, r.updated_by, r.customer_name, r.customer_phone, r.description,
-      r.amount, r.currency, r.status, r.request_id, r.paid_at, r.created_at, r.updated_at,
+      r.amount, r.currency, r.status, r.request_id, r.paid_at, r.created_at, r.updated_at, r.invoice_number, r.due_date,
       s.name as store_name,
       u_created.name as created_by_name, u_updated.name as updated_by_name,
       (SELECT COALESCE(jsonb_array_length(req.items), 0)::int FROM requests req WHERE req.id = r.request_id) AS items_count,
       (SELECT req.order_number FROM requests req WHERE req.id = r.request_id) AS order_number,
+      (
+        SELECT STRING_AGG(DISTINCT name, ', ' ORDER BY name)
+        FROM (
+          SELECT TRIM(SUBSTRING(elem->>'productName' FOR 25)) AS name
+          FROM requests req,
+               LATERAL jsonb_array_elements(req.items) AS elem
+          WHERE req.id = r.request_id
+            AND req.store_id = r.store_id
+            AND jsonb_typeof(req.items) = 'array'
+            AND COALESCE(TRIM(elem->>'productName'), '') <> ''
+          LIMIT 5
+        ) AS names
+      ) AS product_names,
       COALESCE((SELECT SUM(rp.amount)::numeric FROM receivable_payments rp WHERE rp.receivable_id = r.id), 0)::float AS total_paid
     FROM receivables r
     LEFT JOIN stores s ON s.id = r.store_id
@@ -337,7 +408,7 @@ export async function getReceivablesByStore(storeId, options = {}) {
 export async function getReceivablesByStoreWithPayments(storeId) {
   const result = await query(
     `SELECT r.id, r.store_id, r.receivable_number, r.created_by, r.updated_by, r.customer_name, r.customer_phone, r.description,
-      r.amount, r.currency, r.status, r.request_id, r.paid_at, r.created_at, r.updated_at,
+      r.amount, r.currency, r.status, r.request_id, r.paid_at, r.created_at, r.updated_at, r.invoice_number, r.due_date,
       s.name as store_name,
       u_created.name as created_by_name, u_updated.name as updated_by_name,
       COALESCE((
@@ -363,7 +434,7 @@ export async function getReceivablesByStoreWithPayments(storeId) {
 export async function getReceivableById(receivableId, storeId) {
   const result = await query(
     `SELECT r.id, r.store_id, r.receivable_number, r.created_by, r.updated_by, r.customer_name, r.customer_phone, r.description,
-      r.amount, r.currency, r.status, r.request_id, r.paid_at, r.created_at, r.updated_at,
+      r.amount, r.currency, r.status, r.request_id, r.paid_at, r.created_at, r.updated_at, r.invoice_number, r.due_date,
       s.name as store_name,
       u_created.name as created_by_name, u_updated.name as updated_by_name
      FROM receivables r
@@ -390,7 +461,7 @@ export async function getReceivablesByIds(ids, storeId) {
   if (validIds.length === 0) return [];
   const result = await query(
     `SELECT r.id, r.store_id, r.receivable_number, r.created_by, r.updated_by, r.customer_name, r.customer_phone, r.description,
-      r.amount, r.currency, r.status, r.request_id, r.paid_at, r.created_at, r.updated_at,
+      r.amount, r.currency, r.status, r.request_id, r.paid_at, r.created_at, r.updated_at, r.invoice_number, r.due_date,
       s.name as store_name,
       u_created.name as created_by_name, u_updated.name as updated_by_name
      FROM receivables r
@@ -414,7 +485,7 @@ export async function getReceivableByStoreAndReceivableNumber(storeId, receivabl
   if (Number.isNaN(num) || num < 1) return null;
   const result = await query(
     `SELECT r.id, r.store_id, r.receivable_number, r.created_by, r.updated_by, r.customer_name, r.customer_phone, r.description,
-      r.amount, r.currency, r.status, r.request_id, r.paid_at, r.created_at, r.updated_at,
+      r.amount, r.currency, r.status, r.request_id, r.paid_at, r.created_at, r.updated_at, r.invoice_number, r.due_date,
       s.name as store_name,
       u_created.name as created_by_name, u_updated.name as updated_by_name
      FROM receivables r
@@ -550,7 +621,7 @@ export async function reopenReceivable(receivableId, storeId, updatedByUserId) {
 
   const result = await query(
     `SELECT r.id, r.store_id, r.receivable_number, r.created_by, r.updated_by, r.customer_name, r.customer_phone, r.description,
-      r.amount, r.currency, r.status, r.request_id, r.paid_at, r.created_at, r.updated_at,
+      r.amount, r.currency, r.status, r.request_id, r.paid_at, r.created_at, r.updated_at, r.invoice_number, r.due_date,
       s.name as store_name,
       u_created.name as created_by_name, u_updated.name as updated_by_name
      FROM receivables r
@@ -571,7 +642,7 @@ export async function reopenReceivable(receivableId, storeId, updatedByUserId) {
  * @param {string} [updatedByUserId] - Usuario que realiza la actualización (para trazabilidad)
  */
 export async function updateReceivable(receivableId, storeId, updates, updatedByUserId = null) {
-  const allowed = ['customerName', 'customerPhone', 'description', 'amount', 'currency', 'status'];
+  const allowed = ['customerName', 'customerPhone', 'description', 'amount', 'currency', 'status', 'dueDate'];
   const dbFields = {
     customerName: 'customer_name',
     customerPhone: 'customer_phone',
@@ -579,6 +650,7 @@ export async function updateReceivable(receivableId, storeId, updates, updatedBy
     amount: 'amount',
     currency: 'currency',
     status: 'status',
+    dueDate: 'due_date',
   };
 
   // Obtener estado anterior para logs y para restaurar stock al cancelar
@@ -642,6 +714,11 @@ export async function updateReceivable(receivableId, storeId, updates, updatedBy
   if (updates.currency !== undefined) {
     setClauses.push(`currency = $${paramIdx}`);
     values.push(updates.currency || 'USD');
+    paramIdx++;
+  }
+  if (updates.dueDate !== undefined) {
+    setClauses.push(`due_date = $${paramIdx}`);
+    values.push(updates.dueDate || null);
     paramIdx++;
   }
 

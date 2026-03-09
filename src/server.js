@@ -30,6 +30,7 @@ import clientRecurringReminderRoutes from './routes/clientRecurringReminderRoute
 import cron from 'node-cron';
 import { flowPost } from './controllers/flowController.js';
 import { runReceivableRemindersJob } from './services/reminderService.js';
+import { sendDueInvoiceReminders } from './jobs/receivableInvoiceRemindersJob.js';
 
 // Cargar variables de entorno
 dotenv.config();
@@ -95,20 +96,31 @@ app.use(errorHandler);
 // Job de recordatorios con node-cron (ej: "0 9 * * *" = diario a las 9:00)
 const REMINDER_JOB_CRON = process.env.REMINDER_JOB_CRON || '0 9 * * *';
 
-function runReminderJob() {
-  runReceivableRemindersJob()
-    .then((result) => {
-      console.log(`[Recordatorios] Job ejecutado: ${result.remindersCreated} recordatorios, ${result.whatsappSent} WhatsApp enviados, ${result.usersProcessed} usuarios`);
-    })
-    .catch((err) => {
-      console.error('[Recordatorios] Error en job:', err?.message || err);
-    });
+async function runReminderJob() {
+  try {
+    const result = await runReceivableRemindersJob();
+    console.log(
+      `[Recordatorios] Job ejecutado: ${result.remindersCreated} recordatorios, ${result.whatsappSent} WhatsApp enviados, ${result.usersProcessed} usuarios`
+    );
+  } catch (err) {
+    console.error('[Recordatorios] Error en job (recordatorios usuario):', err?.message || err);
+  }
+
+  try {
+    const invoiceResult = await sendDueInvoiceReminders();
+    console.log(
+      `[Recordatorios facturas] Job ejecutado: ${invoiceResult.sent}/${invoiceResult.total} enviados, ${invoiceResult.failed} fallidos`
+    );
+  } catch (err) {
+    console.error('[Recordatorios facturas] Error en job:', err?.message || err);
+  }
 }
 
 // Iniciar servidor
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  //runReminderJob();
+  // Ejecutar una vez al iniciar la app para enviar recordatorios pendientes de hoy
+  runReminderJob();
   if (cron.validate(REMINDER_JOB_CRON)) {
     cron.schedule(REMINDER_JOB_CRON, runReminderJob);
     console.log(`[Recordatorios] Cron programado: ${REMINDER_JOB_CRON}`);

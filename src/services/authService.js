@@ -540,7 +540,7 @@ export async function updateUser(userId, userData) {
 /**
  * Actualizar configuración de recordatorios del usuario (solo sus propios datos).
  * @param {string} userId - ID del usuario
- * @param {Object} data - reminders_enabled?, reminder_days_after_creation?, reminder_days_after_last_payment?, reminder_interval_days?
+ * @param {Object} data - reminders_enabled?, reminder_days_after_creation?, reminder_days_after_last_payment?, reminder_interval_days?, reminder_min_days_age?
  * @returns {Promise<Object>} Usuario con campos de recordatorios actualizados
  */
 export async function updateUserReminderSettings(userId, data) {
@@ -554,20 +554,29 @@ export async function updateUserReminderSettings(userId, data) {
     paramIndex++;
   }
   if (data.reminder_days_after_creation !== undefined) {
-    const days = Math.max(1, Math.min(365, Number(data.reminder_days_after_creation) || 30));
+    // Día del mes para enviar el reporte (1-31)
+    const day = Math.max(1, Math.min(31, Number(data.reminder_days_after_creation) || 1));
     updates.push(`reminder_days_after_creation = $${paramIndex}`);
-    values.push(days);
+    values.push(day);
     paramIndex++;
   }
   if (data.reminder_days_after_last_payment !== undefined) {
-    const days = Math.max(1, Math.min(365, Number(data.reminder_days_after_last_payment) || 15));
+    // Flag 0/1: enviar reporte por correo
+    const flag = Boolean(data.reminder_days_after_last_payment);
     updates.push(`reminder_days_after_last_payment = $${paramIndex}`);
-    values.push(days);
+    values.push(flag ? 1 : 0);
     paramIndex++;
   }
   if (data.reminder_interval_days !== undefined) {
-    const days = Math.max(1, Math.min(365, Number(data.reminder_interval_days) || 7));
+    // Flag 0/1: enviar reporte por WhatsApp (teléfono)
+    const flag = Boolean(data.reminder_interval_days);
     updates.push(`reminder_interval_days = $${paramIndex}`);
+    values.push(flag ? 1 : 0);
+    paramIndex++;
+  }
+  if (data.reminder_min_days_age !== undefined) {
+    const days = Math.max(1, Math.min(365, Number(data.reminder_min_days_age) || 30));
+    updates.push(`reminder_min_days_age = $${paramIndex}`);
     values.push(days);
     paramIndex++;
   }
@@ -576,9 +585,13 @@ export async function updateUserReminderSettings(userId, data) {
     user
       ? {
           reminders_enabled: Boolean(user.reminders_enabled),
-          reminder_days_after_creation: user.reminder_days_after_creation ?? 30,
-          reminder_days_after_last_payment: user.reminder_days_after_last_payment ?? 15,
-          reminder_interval_days: user.reminder_interval_days ?? 7,
+          // Día del mes configurado para el reporte
+          reminder_days_after_creation: user.reminder_days_after_creation ?? 1,
+          // Flags 0/1 para canales
+          reminder_days_after_last_payment: user.reminder_days_after_last_payment ?? 0,
+          reminder_interval_days: user.reminder_interval_days ?? 0,
+          // Días mínimos de antigüedad para incluir cuentas en el reporte
+          reminder_min_days_age: user.reminder_min_days_age ?? 30,
         }
       : null;
 

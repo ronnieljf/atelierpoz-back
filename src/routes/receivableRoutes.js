@@ -23,6 +23,11 @@ import {
   getReceivableAttachmentsHandler,
   createReceivableAttachmentHandler,
   getReceivableAttachmentDownloadHandler,
+  getReceivableRemindersHandler,
+  getReceivableReminderDefaultsHandler,
+  createReceivableReminderHandler,
+  updateReceivableReminderHandler,
+  deleteReceivableReminderHandler,
 } from '../controllers/receivableController.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/permission.js';
@@ -182,6 +187,67 @@ router.delete('/:id/payments/:paymentId', requirePermission('receivables.edit', 
 router.get('/:id/logs', requirePermission('receivables.view', storeIdQOrB), getReceivableLogsHandler);
 
 /**
+ * GET /api/receivables/:id/reminders
+ * Listar recordatorios programables. Query: storeId
+ */
+router.get('/:id/reminders', requirePermission('receivables.view', storeIdQOrB), getReceivableRemindersHandler);
+
+/**
+ * GET /api/receivables/:id/reminders/defaults
+ * Datos prellenados para crear recordatorio. Query: storeId
+ */
+router.get('/:id/reminders/defaults', requirePermission('receivables.view', storeIdQOrB), getReceivableReminderDefaultsHandler);
+
+/**
+ * POST /api/receivables/:id/reminders
+ * Crear recordatorio. Body: { storeId, fechaEnvio, ... }
+ */
+const createReminderValidation = [
+  body('storeId').notEmpty().withMessage('storeId es requerido').isUUID().withMessage('storeId debe ser UUID'),
+  body('fechaEnvio').notEmpty().withMessage('fechaEnvio es requerida').isDate().withMessage('fechaEnvio debe ser fecha YYYY-MM-DD'),
+  body('fechaVencimiento').notEmpty().withMessage('fechaVencimiento es requerida').isDate().withMessage('fechaVencimiento debe ser fecha YYYY-MM-DD'),
+  body('customerName').optional().trim().isLength({ max: 255 }),
+  body('storeName').optional().trim().isLength({ max: 255 }),
+  body('invoiceOrAccount').optional().trim().isLength({ max: 100 }),
+  body('datosPagomovil').optional().trim().isLength({ max: 2000 }),
+  body('datosTransferencia').optional().trim().isLength({ max: 2000 }),
+  body('datosBinance').optional().trim().isLength({ max: 2000 }),
+  body('datosContacto').optional().trim().isLength({ max: 1000 }),
+  body('esMora').optional().isBoolean(),
+  body('repetirVeces').optional().isInt({ min: 0 }),
+  body('repetirCadaDias').optional().isInt({ min: 0 }),
+];
+router.post('/:id/reminders', requirePermission('receivables.edit', storeIdQOrB), createReminderValidation, createReceivableReminderHandler);
+
+/**
+ * PUT /api/receivables/:id/reminders/:reminderId
+ * Actualizar recordatorio. Body: { storeId, ... }
+ */
+const updateReminderValidation = [
+  body('storeId').notEmpty().withMessage('storeId es requerido').isUUID().withMessage('storeId debe ser UUID'),
+  body('customerName').optional().trim().isLength({ max: 255 }),
+  body('storeName').optional().trim().isLength({ max: 255 }),
+  body('invoiceOrAccount').optional().trim().isLength({ max: 100 }),
+  body('fechaVencimiento').optional().isDate(),
+  body('fechaEnvio').optional().isDate(),
+  body('datosPagomovil').optional().trim().isLength({ max: 2000 }),
+  body('datosTransferencia').optional().trim().isLength({ max: 2000 }),
+  body('datosBinance').optional().trim().isLength({ max: 2000 }),
+  body('datosContacto').optional().trim().isLength({ max: 1000 }),
+  body('esMora').optional().isBoolean(),
+  body('repetirVeces').optional().isInt({ min: 0 }),
+  body('repetirCadaDias').optional().isInt({ min: 0 }),
+  body('status').optional().isIn(['pending', 'sent', 'cancelled']),
+];
+router.put('/:id/reminders/:reminderId', requirePermission('receivables.edit', storeIdQOrB), updateReminderValidation, updateReceivableReminderHandler);
+
+/**
+ * DELETE /api/receivables/:id/reminders/:reminderId
+ * Eliminar recordatorio. Query: storeId
+ */
+router.delete('/:id/reminders/:reminderId', requirePermission('receivables.edit', storeIdQOrB), deleteReceivableReminderHandler);
+
+/**
  * POST /api/receivables/:id/reopen
  * Reabrir cuenta cobrada (solo manuales). Body: { storeId }
  */
@@ -209,7 +275,7 @@ router.put('/:id/items', requirePermission('receivables.edit', storeIdQOrB), upd
 
 /**
  * PUT /api/receivables/:id
- * Body: { storeId, customerName?, customerPhone?, description?, amount?, currency?, status? }
+ * Body: { storeId, customerName?, customerPhone?, description?, amount?, currency?, status?, dueDate? }
  */
 const updateValidation = [
   body('storeId').notEmpty().withMessage('storeId es requerido').isUUID().withMessage('storeId debe ser UUID'),
@@ -219,6 +285,7 @@ const updateValidation = [
   body('amount').optional().isFloat({ min: 0 }).withMessage('El monto debe ser mayor o igual a 0'),
   body('currency').optional().isIn(['USD', 'EUR', 'VES']),
   body('status').optional().isIn(['pending', 'paid', 'cancelled']).withMessage('Estado debe ser pending, paid o cancelled'),
+  body('dueDate').optional().isISO8601().withMessage('dueDate debe ser una fecha válida (YYYY-MM-DD)'),
 ];
 router.put('/:id', requirePermission('receivables.edit', storeIdQOrB), updateValidation, updateReceivableHandler);
 

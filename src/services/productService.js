@@ -1171,43 +1171,27 @@ export async function setProductOutOfStock(productId, storeId) {
     throw new Error('Producto no encontrado');
   }
 
-  // Actualizar el stock a 0
-  const result = await query(
+  // Si tiene combinaciones, ponerlas también en 0
+  let zeroCombinations = product.combinations;
+  if (Array.isArray(product.combinations) && product.combinations.length > 0) {
+    zeroCombinations = product.combinations.map((c) => ({
+      ...c,
+      stock: 0,
+    }));
+  }
+
+  await query(
     `UPDATE products
-     SET stock = 0, updated_at = CURRENT_TIMESTAMP
-     WHERE id = $1 AND store_id = $2
-     RETURNING id, name, description, base_price, currency, stock, sku,
-               category_id, images, attributes, rating, review_count, tags,
-               created_at, updated_at`,
-    [productId, storeId]
+     SET stock = 0,
+         combinations = $3::jsonb,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1 AND store_id = $2`,
+    [productId, storeId, JSON.stringify(zeroCombinations || [])]
   );
 
-  if (result.rows.length === 0) {
-    return null;
-  }
-
-  const updatedProduct = result.rows[0];
-  
-  // Obtener la categoría y tienda
-  const categoryResult = await query(
-    'SELECT name, slug FROM categories WHERE id = $1',
-    [updatedProduct.category_id]
-  );
-  
-  const storeResult = await query(
-    'SELECT name FROM stores WHERE id = $1',
-    [updatedProduct.store_id]
-  );
-  
-  if (categoryResult.rows.length > 0) {
-    updatedProduct.category_name = categoryResult.rows[0].name;
-    updatedProduct.category_slug = categoryResult.rows[0].slug;
-  }
-  if (storeResult.rows.length > 0) {
-    updatedProduct.store_name = storeResult.rows[0].name;
-  }
-
-  return formatProduct(updatedProduct);
+  // Devolver el producto actualizado y formateado
+  const updated = await getProductById(productId, storeId);
+  return updated ? updated : null;
 }
 
 /**

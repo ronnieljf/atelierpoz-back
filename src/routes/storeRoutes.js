@@ -5,11 +5,13 @@
 import express from 'express';
 import { body } from 'express-validator';
 import { getStores, getStoreById, getAllStoresPublic, getStoreByIdPublicHandler, getStoreCategoriesHandler, getStoreContactUsersPublicHandler, getStoreFeatureSendReminderReceivablesWhatsappHandler, createStoreHandler, updateStoreHandler, addUserToStoreHandler, removeUserFromStoreHandler, updateUserPhoneNumberHandler, getStoreUsersHandler, uploadStoreLogoHandler, getMyPermissionsHandler, setUserPermissionsHandler, getAllPermissionsHandler } from '../controllers/storeController.js';
+import { getPaymentOptionsHandler, createPaymentOptionHandler, updatePaymentOptionHandler, deletePaymentOptionHandler } from '../controllers/storePaymentOptionController.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/permission.js';
 import { uploadLogoMiddleware } from '../middleware/multer.js';
 
 const router = express.Router();
+const storeIdFromParams = (req) => req.params.id;
 
 // Rutas públicas (sin autenticación) - DEBEN estar antes del middleware
 /**
@@ -167,6 +169,39 @@ const updatePhoneValidation = [
     .withMessage('El número de teléfono no puede tener más de 20 caracteres'),
 ];
 router.put('/:id/users/phone', authenticateToken, updatePhoneValidation, updateUserPhoneNumberHandler);
+
+/**
+ * GET /api/stores/:id/payment-options
+ * Listar opciones de pago guardadas (PagoMovil, transferencia, Binance)
+ */
+router.get('/:id/payment-options', requirePermission('receivables.view', storeIdFromParams), getPaymentOptionsHandler);
+
+/**
+ * POST /api/stores/:id/payment-options
+ * Crear opción de pago. Body: { type, data, label? }
+ */
+const createPaymentOptionValidation = [
+  body('type').isIn(['pagomovil', 'transferencia', 'binance']).withMessage('type debe ser pagomovil, transferencia o binance'),
+  body('data').trim().notEmpty().withMessage('data es requerido'),
+  body('label').optional().trim().isLength({ max: 100 }),
+];
+router.post('/:id/payment-options', requirePermission('receivables.edit', storeIdFromParams), createPaymentOptionValidation, createPaymentOptionHandler);
+
+/**
+ * PUT /api/stores/:id/payment-options/:optionId
+ * Actualizar opción de pago. Body: { label?, data? }
+ */
+const updatePaymentOptionValidation = [
+  body('label').optional().trim().isLength({ max: 100 }),
+  body('data').optional().trim(),
+];
+router.put('/:id/payment-options/:optionId', requirePermission('receivables.edit', storeIdFromParams), updatePaymentOptionValidation, updatePaymentOptionHandler);
+
+/**
+ * DELETE /api/stores/:id/payment-options/:optionId
+ * Eliminar opción de pago
+ */
+router.delete('/:id/payment-options/:optionId', requirePermission('receivables.edit', storeIdFromParams), deletePaymentOptionHandler);
 
 /**
  * GET /api/stores/:id

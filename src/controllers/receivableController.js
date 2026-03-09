@@ -27,6 +27,13 @@ import {
   getAttachmentsByReceivableId,
   getAttachmentDownloadUrl,
 } from '../services/receivableAttachmentService.js';
+import {
+  getRemindersByReceivable,
+  getDefaultReminderData,
+  createReminder,
+  updateReminder,
+  deleteReminder,
+} from '../services/receivableReminderService.js';
 
 /** Parsea initialPayment desde body (puede venir como objeto o JSON string en FormData) */
 function parseInitialPayment(body) {
@@ -45,12 +52,12 @@ function parseInitialPayment(body) {
 
 /**
  * POST /api/receivables
- * Crear cuenta por cobrar manual: body { storeId, customerName?, customerPhone?, description?, amount, currency? }
+ * Crear cuenta por cobrar manual: body { storeId, customerName?, customerPhone?, description?, amount, currency?, invoiceNumber? }
  */
 export async function createReceivableHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const { storeId, customerName, customerPhone, description, amount, currency } = req.body;
+    const { storeId, customerName, customerPhone, description, amount, currency, invoiceNumber, dueDate } = req.body;
 
     if (!storeId) {
       return res.status(400).json({
@@ -94,14 +101,16 @@ export async function createReceivableHandler(req, res, next) {
       description: description?.trim() || null,
       amount: amountNum,
       currency: currency || 'USD',
+      invoiceNumber: typeof invoiceNumber === 'string' && invoiceNumber.trim() ? invoiceNumber.trim() : null,
       initialPayment,
+      dueDate: dueDate && String(dueDate).trim() ? String(dueDate).trim().slice(0, 10) : null,
     });
 
-    // Si se subió comprobante para el abono inicial, crear adjunto
-    if (req.file && req.file.buffer && initialPaymentId) {
+    // Si se subió comprobante (abono inicial o general), crear adjunto
+    if (req.file && req.file.buffer) {
       await createAttachment({
         receivableId: receivable.id,
-        paymentId: initialPaymentId,
+        paymentId: initialPaymentId || null,
         file: req.file,
         createdBy: userId,
       });
@@ -118,12 +127,12 @@ export async function createReceivableHandler(req, res, next) {
 
 /**
  * POST /api/receivables/from-request
- * Crear cuenta por cobrar a partir de un pedido: body { storeId, requestId, description?, customerName?, customerPhone? }
+ * Crear cuenta por cobrar a partir de un pedido: body { storeId, requestId, description?, customerName?, customerPhone?, amount?, invoiceNumber? }
  */
 export async function createReceivableFromRequestHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const { storeId, requestId, description, customerName, customerPhone, amount } = req.body;
+    const { storeId, requestId, description, customerName, customerPhone, amount, invoiceNumber, dueDate } = req.body;
 
     if (!storeId || !requestId) {
       return res.status(400).json({
@@ -167,14 +176,16 @@ export async function createReceivableFromRequestHandler(req, res, next) {
       customerName: customerName !== undefined ? customerName : undefined,
       customerPhone: customerPhone !== undefined ? customerPhone : undefined,
       amount: amountNum,
+      invoiceNumber: typeof invoiceNumber === 'string' && invoiceNumber.trim() ? invoiceNumber.trim() : undefined,
       initialPayment,
+      dueDate: dueDate && String(dueDate).trim() ? String(dueDate).trim().slice(0, 10) : undefined,
     });
 
     // Si se subió comprobante para el abono inicial, crear adjunto
-    if (req.file && req.file.buffer && initialPaymentId) {
+    if (req.file && req.file.buffer) {
       await createAttachment({
         receivableId: receivable.id,
-        paymentId: initialPaymentId,
+        paymentId: initialPaymentId || null,
         file: req.file,
         createdBy: userId,
       });
@@ -197,12 +208,16 @@ export async function createReceivableFromRequestHandler(req, res, next) {
 
 /**
  * GET /api/receivables
- * Listar cuentas por cobrar de una tienda. Query: storeId (requerido), status?, limit?, offset?, dateFrom? (YYYY-MM-DD), dateTo? (YYYY-MM-DD), search? (nombre o número de cliente/cuenta)
+ * Listar cuentas por cobrar de una tienda.
+ * Query: storeId (requerido), status?, limit?, offset?, dateFrom? (YYYY-MM-DD), dateTo? (YYYY-MM-DD),
+ * search? (nombre o número de cliente/cuenta o producto),
+ * invoiceNumber? (string parcial o completo),
+ * source? ('manual' | 'request') para filtrar por origen (manual vs desde pedido).
  */
 export async function getReceivablesHandler(req, res, next) {
   try {
     const userId = req.user.id;
-    const { storeId, status, limit, offset, dateFrom, dateTo, search } = req.query;
+    const { storeId, status, limit, offset, dateFrom, dateTo, search, invoiceNumber, source } = req.query;
 
     if (!storeId) {
       return res.status(400).json({
@@ -226,6 +241,8 @@ export async function getReceivablesHandler(req, res, next) {
       dateFrom: dateFrom && /^\d{4}-\d{2}-\d{2}$/.test(dateFrom) ? dateFrom : undefined,
       dateTo: dateTo && /^\d{4}-\d{2}-\d{2}$/.test(dateTo) ? dateTo : undefined,
       search: typeof search === 'string' && search.trim() ? search.trim() : undefined,
+      invoiceNumber: typeof invoiceNumber === 'string' && invoiceNumber.trim() ? invoiceNumber.trim() : undefined,
+      source: source === 'manual' || source === 'request' ? source : undefined,
     });
 
     return res.json({
@@ -761,6 +778,19 @@ export async function sendReceivableRemindersHandler(req, res, next) {
     const { name: storeName, phoneNumber: storePhone } = await getStoreNameAndPhone(storeId);
     const storePhoneStr = storePhone ? String(storePhone).replace(/^\s*\+/, '').trim() : '';
 
+    // Teléfono de contacto: priorizar el número del usuario que envía, y si no tiene, usar el de la tienda.
+    const userPhoneResult = await query(
+      `SELECT phone_number
+       FROM store_users
+       WHERE user_id = $1 AND phone_number IS NOT NULL AND TRIM(phone_number) != ''
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [userId]
+    );
+    const rawUserPhone = userPhoneResult.rows[0]?.phone_number;
+    const userPhoneStr = rawUserPhone ? String(rawUserPhone).replace(/^\s*\+/, '').trim() : '';
+    const contactPhoneStr = userPhoneStr || storePhoneStr;
+
     const headerParams = [storeName];
 
     let sent = 0;
@@ -808,7 +838,7 @@ export async function sendReceivableRemindersHandler(req, res, next) {
           storeName,          // {{2}} nombre de la tienda
           totalAmountUsd,     // {{3}} monto que debe
           productDetails,     // {{4}} detalle de lo que debe
-          storePhoneStr,      // {{5}} número de teléfono de la tienda
+          contactPhoneStr,    // {{5}} número de teléfono de contacto (usuario que envía, o tienda como fallback)
         ];
 
         const templateName = 'notificacion_pago_pendiente';
@@ -1017,6 +1047,210 @@ export async function getReceivableAttachmentDownloadHandler(req, res, next) {
     }
 
     return res.json({ success: true, downloadUrl: url });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * GET /api/receivables/:id/reminders
+ * Listar recordatorios de una cuenta por cobrar. Query: storeId
+ */
+export async function getReceivableRemindersHandler(req, res, next) {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+    const { storeId } = req.query;
+
+    if (!storeId) {
+      return res.status(400).json({ success: false, error: 'storeId es requerido' });
+    }
+
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
+    }
+
+    const receivable = await getReceivableById(id, storeId);
+    if (!receivable) {
+      return res.status(404).json({ success: false, error: 'Cuenta por cobrar no encontrada' });
+    }
+
+    const reminders = await getRemindersByReceivable(id, storeId);
+    return res.json({ success: true, reminders });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * GET /api/receivables/:id/reminders/defaults
+ * Obtener datos prellenados para crear un recordatorio. Query: storeId
+ */
+export async function getReceivableReminderDefaultsHandler(req, res, next) {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+    const { storeId } = req.query;
+
+    if (!storeId) {
+      return res.status(400).json({ success: false, error: 'storeId es requerido' });
+    }
+
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
+    }
+
+    const defaults = await getDefaultReminderData(id, storeId);
+    if (!defaults) {
+      return res.status(404).json({ success: false, error: 'Cuenta por cobrar no encontrada' });
+    }
+
+    return res.json({ success: true, defaults });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/receivables/:id/reminders
+ * Crear recordatorio. Body: { storeId, fechaEnvio, ...otros campos opcionales }
+ */
+export async function createReceivableReminderHandler(req, res, next) {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+    const {
+      storeId,
+      fechaEnvio,
+      customerName,
+      storeName,
+      invoiceOrAccount,
+      fechaVencimiento,
+      datosPagomovil,
+      datosTransferencia,
+      datosBinance,
+      datosContacto,
+      esMora,
+      repetirVeces,
+      repetirCadaDias,
+    } = req.body;
+
+    if (!storeId) {
+      return res.status(400).json({ success: false, error: 'storeId es requerido' });
+    }
+    if (!fechaEnvio) {
+      return res.status(400).json({ success: false, error: 'La fecha de envío es requerida' });
+    }
+
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
+    }
+
+    const reminders = await createReminder({
+      receivableId: id,
+      storeId,
+      fechaEnvio,
+      customerName: customerName || undefined,
+      storeName: storeName || undefined,
+      invoiceOrAccount: invoiceOrAccount || undefined,
+      fechaVencimiento: fechaVencimiento || undefined,
+      datosPagomovil: datosPagomovil || undefined,
+      datosTransferencia: datosTransferencia || undefined,
+      datosBinance: datosBinance || undefined,
+      datosContacto: datosContacto || undefined,
+      esMora: esMora === true,
+      repetirVeces: repetirVeces != null ? Number(repetirVeces) : undefined,
+      repetirCadaDias: repetirCadaDias != null ? Number(repetirCadaDias) : undefined,
+    });
+    return res.json({ success: true, reminders });
+  } catch (error) {
+    if (error.message?.includes('Cuenta por cobrar no encontrada')) {
+      return res.status(404).json({ success: false, error: error.message });
+    }
+    next(error);
+  }
+}
+
+/**
+ * PUT /api/receivables/:id/reminders/:reminderId
+ * Actualizar recordatorio. Body: { storeId, ...campos a actualizar }
+ */
+export async function updateReceivableReminderHandler(req, res, next) {
+  try {
+    const userId = req.user.id;
+    const { id, reminderId } = req.params;
+    const { storeId, ...data } = req.body;
+
+    if (!storeId) {
+      return res.status(400).json({ success: false, error: 'storeId es requerido' });
+    }
+
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
+    }
+
+    const receivable = await getReceivableById(id, storeId);
+    if (!receivable) {
+      return res.status(404).json({ success: false, error: 'Cuenta por cobrar no encontrada' });
+    }
+
+    const reminder = await updateReminder(reminderId, storeId, {
+      customerName: data.customerName,
+      storeName: data.storeName,
+      invoiceOrAccount: data.invoiceOrAccount,
+      fechaVencimiento: data.fechaVencimiento,
+      datosPagomovil: data.datosPagomovil,
+      datosTransferencia: data.datosTransferencia,
+      datosBinance: data.datosBinance,
+      datosContacto: data.datosContacto,
+      fechaEnvio: data.fechaEnvio,
+      esMora: data.esMora,
+      repetirVeces: data.repetirVeces,
+      repetirCadaDias: data.repetirCadaDias,
+      status: data.status,
+    });
+    if (!reminder) {
+      return res.status(404).json({ success: false, error: 'Recordatorio no encontrado' });
+    }
+    return res.json({ success: true, reminder });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * DELETE /api/receivables/:id/reminders/:reminderId
+ * Eliminar recordatorio. Query: storeId
+ */
+export async function deleteReceivableReminderHandler(req, res, next) {
+  try {
+    const userId = req.user.id;
+    const { id, reminderId } = req.params;
+    const { storeId } = req.query;
+
+    if (!storeId) {
+      return res.status(400).json({ success: false, error: 'storeId es requerido' });
+    }
+
+    const storeCheck = await getUserStoreById(storeId, userId);
+    if (!storeCheck) {
+      return res.status(403).json({ success: false, error: 'No tienes acceso a esta tienda' });
+    }
+
+    const receivable = await getReceivableById(id, storeId);
+    if (!receivable) {
+      return res.status(404).json({ success: false, error: 'Cuenta por cobrar no encontrada' });
+    }
+
+    const deleted = await deleteReminder(reminderId, storeId);
+    if (!deleted) {
+      return res.status(404).json({ success: false, error: 'Recordatorio no encontrado' });
+    }
+    return res.json({ success: true });
   } catch (error) {
     next(error);
   }

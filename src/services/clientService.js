@@ -5,12 +5,46 @@
 import { query } from '../config/database.js';
 
 /**
- * Buscar cliente por tienda y teléfono (teléfono normalizado: solo dígitos)
+ * Normalizar teléfono a solo dígitos (para búsquedas internas).
  */
 function normalizePhone(phone) {
   if (phone == null || typeof phone !== 'string') return null;
   const digits = String(phone).replace(/\D/g, '');
   return digits.length > 0 ? digits : null;
+}
+
+/**
+ * Formatear teléfono para almacenamiento / uso en WhatsApp:
+ * - Elimina espacios, guiones, paréntesis y símbolos.
+ * - Si no tiene código de país, asume Venezuela (58).
+ *   Regla:
+ *   - Si ya empieza por 58 -> se deja igual (solo dígitos).
+ *   - Si no, se quitan ceros a la izquierda y se antepone 58.
+ * - Devuelve solo dígitos, sin "+" ni "00".
+ */
+function formatPhoneForWhatsApp(phone) {
+  if (phone == null) return null;
+  let raw = String(phone).trim();
+  if (!raw) return null;
+
+  // Solo dígitos
+  let digits = raw.replace(/\D/g, '');
+  if (!digits) return null;
+
+  // Quitar prefijo internacional "00" si viene así
+  if (digits.startsWith('00')) {
+    digits = digits.slice(2);
+  }
+
+  // Si ya trae 58 como código de país, lo dejamos así
+  if (digits.startsWith('58')) {
+    return digits;
+  }
+
+  // Si no tiene código de país, asumimos número local: quitar ceros a la izquierda y anteponer 58
+  digits = digits.replace(/^0+/, '');
+  if (!digits) return null;
+  return `58${digits}`;
 }
 
 /**
@@ -66,13 +100,18 @@ export async function upsertClientFromOrder(storeId, data) {
   const name = data?.name != null ? String(data.name).trim() : null;
   const email = data?.email != null && String(data.email).trim() !== '' ? String(data.email).trim() : null;
 
-  const existing = await findClientByStoreAndPhone(storeId, phone);
+  const formattedPhone = formatPhoneForWhatsApp(phone);
+
+  // Intentar encontrar cliente tanto por el formato nuevo (58...) como por el antiguo (solo dígitos locales)
+  let existing =
+    (formattedPhone && (await findClientByStoreAndPhone(storeId, formattedPhone))) ||
+    (await findClientByStoreAndPhone(storeId, phone));
   if (!existing) {
     const insert = await query(
       `INSERT INTO clients (name, phone, email, identity_document, store_id)
        VALUES ($1, $2, $3, NULL, $4)
        RETURNING id, name, phone, email, address, identity_document, store_id, created_at, updated_at`,
-      [name || null, phone, email || null, storeId]
+      [name || null, formattedPhone || normalizePhone(phone), email || null, storeId]
     );
     return insert.rows[0] || null;
   }
@@ -119,11 +158,13 @@ export async function createClient(data) {
     err.code = 'VALIDATION';
     throw err;
   }
+  const formattedPhone = phone ? formatPhoneForWhatsApp(phone) : null;
+
   const result = await query(
     `INSERT INTO clients (name, phone, email, address, identity_document, store_id)
      VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id, name, phone, email, address, identity_document, store_id, created_at, updated_at`,
-    [name || null, phone || null, email || null, address || null, cedula || null, store_id]
+    [name || null, formattedPhone || null, email || null, address || null, cedula || null, store_id]
   );
   return result.rows[0];
 }
@@ -209,8 +250,12 @@ export async function updateClient(clientId, storeId, updates) {
     values.push(name === null || name === '' ? null : String(name).trim());
   }
   if (phone !== undefined) {
+    const formattedPhone =
+      phone === null || phone === ''
+        ? null
+        : formatPhoneForWhatsApp(String(phone));
     fields.push(`phone = $${idx++}`);
-    values.push(phone === null || phone === '' ? null : String(phone).trim());
+    values.push(formattedPhone);
   }
   if (email !== undefined) {
     fields.push(`email = $${idx++}`);

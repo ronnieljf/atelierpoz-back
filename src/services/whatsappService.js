@@ -86,9 +86,17 @@ export async function sendWhatsAppText(toPhone, text) {
  * @param {string[]} bodyParams - Parámetros del body en orden ({{1}}, {{2}}, ...). Máx 1024 chars cada uno.
  * @param {string} [languageCode='es']
  * @param {string[]} [headerParams] - Parámetros del header en orden ({{1}}, ...). Opcional.
+ * @param {string} [buttonUrl] - (OBSOLETO) URL para botón de tipo URL. Se deja por compatibilidad, pero el botón se define en el template de Meta.
  * @returns {Promise<{ messageId?: string }>}
  */
-export async function sendWhatsAppTemplate(toPhone, templateName, bodyParams = [], languageCode = 'es', headerParams = null) {
+export async function sendWhatsAppTemplate(
+  toPhone,
+  templateName,
+  bodyParams = [],
+  languageCode = 'es',
+  headerParams = null,
+  buttonUrl = null // ya no se usa; el botón se configura directamente en el template de WhatsApp
+) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WS_token;
 
@@ -171,10 +179,11 @@ export async function sendWhatsAppTemplate(toPhone, templateName, bodyParams = [
   try {
     const data = JSON.parse(errText);
     const err = data?.error;
+    console.error('WhatsApp API error:', err);
     if (err?.message) message = err.message;
-  } catch {
+  } catch (error) {
     message = errText.slice(0, 200) || message;
   }
-  
+
   throw new Error(message);
 }
