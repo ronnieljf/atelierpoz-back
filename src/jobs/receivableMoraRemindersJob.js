@@ -119,10 +119,10 @@ export async function sendDueMoraReminders(storeId = null) {
         r.receivableDescription
       );
 
-      // {{8}} {{9}} Contacto tienda
+      // {{8}} correo contacto (de tienda), {{9}} teléfono datos_contacto (del recordatorio)
       const storeContact = await getStoreContact(r.storeId);
       const correoContacto = storeContact.email || '';
-      const telefonoContacto = storeContact.phoneNumber || '';
+      const telefonoContacto = (r.datosContacto || '').trim() || storeContact.phoneNumber || '';
 
       const bodyParams = [
         customerName,       // {{1}} nombre del cliente
