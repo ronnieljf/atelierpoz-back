@@ -6,7 +6,7 @@
 
 import { query, getClient } from '../config/database.js';
 import { getReceivableById } from './receivableService.js';
-import { getStoreNameAndPhone } from './storeService.js';
+import { getStoreNameAndPhone, getStoreInterestConfig } from './storeService.js';
 import { createPaymentOption, getPaymentOptionsByStore } from './storePaymentOptionService.js';
 
 function toIsoDateString(value) {
@@ -48,6 +48,9 @@ function normalizePaymentData(value) {
 
 function formatReminder(row) {
   if (!row) return null;
+  const tipo = (row.tipo_recordatorio === 'mora' || row.tipo_recordatorio === 'aviso')
+    ? row.tipo_recordatorio
+    : (row.es_mora === true ? 'mora' : 'aviso');
   return {
     id: row.id,
     receivableId: row.receivable_id,
@@ -63,9 +66,13 @@ function formatReminder(row) {
     datosBinance: (row.datos_binance != null && String(row.datos_binance).trim()) ? String(row.datos_binance) : '',
     datosContacto: (row.datos_contacto != null && String(row.datos_contacto).trim()) ? String(row.datos_contacto) : '',
     fechaEnvio: toIsoDateString(row.fecha_envio),
-    esMora: row.es_mora === true,
+    tipoRecordatorio: tipo,
+    esMora: tipo === 'mora',
     repetirVeces: typeof row.repetir_veces === 'number' ? row.repetir_veces : 0,
     repetirCadaDias: typeof row.repetir_cada_dias === 'number' ? row.repetir_cada_dias : 0,
+    interestCadaDias: row.interest_cada_dias != null ? parseInt(row.interest_cada_dias, 10) : null,
+    interestTipo: row.interest_tipo === 'fijo' || row.interest_tipo === 'porcentaje' ? row.interest_tipo : null,
+    interestMonto: row.interest_monto != null ? parseFloat(row.interest_monto) : null,
     status: row.status || 'pending',
     sentAt: row.sent_at || null,
     createdAt: row.created_at,
@@ -80,9 +87,10 @@ function formatReminder(row) {
  * @returns {Promise<Object|null>} Objeto con datos prellenados o null
  */
 export async function getDefaultReminderData(receivableId, storeId) {
-  const [receivable, storeInfo] = await Promise.all([
+  const [receivable, storeInfo, storeInterest] = await Promise.all([
     getReceivableById(receivableId, storeId),
     getStoreNameAndPhone(storeId),
+    getStoreInterestConfig(storeId),
   ]);
   if (!receivable) return null;
 
@@ -92,13 +100,19 @@ export async function getDefaultReminderData(receivableId, storeId) {
       ? String(receivable.receivableNumber)
       : null;
 
-  return {
+  const result = {
     customerName: receivable.customerName || null,
     storeName: storeInfo?.name || receivable.storeName || null,
     invoiceOrAccount,
     fechaVencimiento: receivable.dueDate ? String(receivable.dueDate).slice(0, 10) : null,
     datosContacto: storeInfo?.phoneNumber ? storeInfo.phoneNumber.trim() : null,
   };
+  if (storeInterest) {
+    result.interestCadaDias = storeInterest.cadaDias;
+    result.interestTipo = storeInterest.tipo;
+    result.interestMonto = storeInterest.monto;
+  }
+  return result;
 }
 
 /**
@@ -111,7 +125,9 @@ export async function getRemindersByReceivable(receivableId, storeId) {
   const result = await query(
     `SELECT rr.id, rr.receivable_id, rr.store_id, rr.customer_name, rr.store_name, rr.invoice_or_account,
        rr.fecha_vencimiento, rr.datos_pagomovil, rr.datos_transferencia, rr.datos_binance, rr.datos_contacto,
-       rr.fecha_envio, rr.status, rr.sent_at, rr.created_at, rr.updated_at, r.customer_phone
+       rr.fecha_envio, rr.status, rr.sent_at, rr.created_at, rr.updated_at, rr.tipo_recordatorio, rr.es_mora,
+       rr.repetir_veces, rr.repetir_cada_dias, rr.interest_cada_dias, rr.interest_tipo, rr.interest_monto,
+       r.customer_phone
      FROM receivable_reminders rr
      INNER JOIN receivables r ON r.id = rr.receivable_id AND r.store_id = rr.store_id
      WHERE rr.receivable_id = $1 AND rr.store_id = $2
@@ -134,10 +150,14 @@ export async function getRemindersByReceivable(receivableId, storeId) {
  * @param {string} [data.datosTransferencia]
  * @param {string} [data.datosBinance]
  * @param {string} [data.datosContacto]
- * @param {boolean} [data.esMora] - Indica si es recordatorio por mora
+ * @param {string} [data.tipoRecordatorio] - 'aviso' (solo para avisar) | 'mora' (por mora)
+ * @param {boolean} [data.esMora] - Deprecado: usar tipoRecordatorio. Indica si es por mora
  * @param {number} [data.repetirVeces] - Cuántas veces se repetirá (0 = no repetir)
  * @param {number} [data.repetirCadaDias] - Cada cuántos días se repetirá (0 = no repetir)
  * @param {string} data.fechaEnvio YYYY-MM-DD (requerido)
+ * @param {number} [data.interestCadaDias] - Mora: cada cuántos días se cobra interés
+ * @param {string} [data.interestTipo] - Mora: 'fijo' | 'porcentaje'
+ * @param {number} [data.interestMonto] - Mora: monto o porcentaje
  */
 export async function createReminder(data) {
   const {
@@ -151,10 +171,14 @@ export async function createReminder(data) {
     datosTransferencia,
     datosBinance,
     datosContacto,
+    tipoRecordatorio,
     esMora,
     repetirVeces,
     repetirCadaDias,
     fechaEnvio,
+    interestCadaDias,
+    interestTipo,
+    interestMonto,
   } = data;
 
   if (!fechaEnvio) {
@@ -175,9 +199,33 @@ export async function createReminder(data) {
   const normPagomovil = normalizePaymentData(datosPagomovil);
   const normTransferencia = normalizePaymentData(datosTransferencia);
   const normBinance = normalizePaymentData(datosBinance);
-  const safeEsMora = esMora === true;
+  const tipo = (tipoRecordatorio === 'mora' || tipoRecordatorio === 'aviso') ? tipoRecordatorio : (esMora === true ? 'mora' : 'aviso');
+  const safeEsMora = tipo === 'mora';
+
+  // Para crear recordatorios de tipo mora, debe existir al menos un recordatorio de tipo aviso
+  if (tipo === 'mora') {
+    const avisoCheck = await query(
+      `SELECT 1 FROM receivable_reminders WHERE receivable_id = $1 AND store_id = $2 AND tipo_recordatorio = 'aviso' LIMIT 1`,
+      [receivableId, storeId]
+    );
+    if (avisoCheck.rows.length === 0) {
+      throw new Error('Para crear un recordatorio por mora, primero debes crear al menos un recordatorio de tipo "solo para avisar"');
+    }
+  }
+
   const repetir = Math.max(1, Math.floor(Number(repetirVeces) || 1));
   const dias = Math.max(0, Math.floor(Number(repetirCadaDias) || 0));
+
+  // Valores de interés para mora: usar los enviados o los defaults de la tienda
+  const intCadaDias = tipo === 'mora'
+    ? (interestCadaDias != null && !Number.isNaN(parseInt(interestCadaDias, 10)) && parseInt(interestCadaDias, 10) > 0 ? parseInt(interestCadaDias, 10) : defaults.interestCadaDias ?? null)
+    : null;
+  const intTipo = tipo === 'mora'
+    ? (interestTipo === 'fijo' || interestTipo === 'porcentaje' ? interestTipo : defaults.interestTipo ?? null)
+    : null;
+  const intMonto = tipo === 'mora'
+    ? (interestMonto != null && !Number.isNaN(parseFloat(interestMonto)) && parseFloat(interestMonto) >= 0 ? parseFloat(interestMonto) : defaults.interestMonto ?? null)
+    : null;
 
   // Cuántos registros crear: 1 si repetir<=1 o días<=0; si no, repetir registros
   const count = repetir > 1 && dias > 0 ? repetir : 1;
@@ -193,11 +241,13 @@ export async function createReminder(data) {
         `INSERT INTO receivable_reminders (
           receivable_id, store_id, customer_name, store_name, invoice_or_account,
           fecha_vencimiento, datos_pagomovil, datos_transferencia, datos_binance, datos_contacto,
-          fecha_envio, status, es_mora, repetir_veces, repetir_cada_dias
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::date, 'pending', $12, 0, 0)
+          fecha_envio, status, tipo_recordatorio, es_mora, repetir_veces, repetir_cada_dias,
+          interest_cada_dias, interest_tipo, interest_monto
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::date, 'pending', $12, $13, 0, 0, $14, $15, $16)
         RETURNING id, receivable_id, store_id, customer_name, store_name, invoice_or_account,
           fecha_vencimiento, datos_pagomovil, datos_transferencia, datos_binance, datos_contacto,
-          fecha_envio, status, sent_at, created_at, updated_at, es_mora, repetir_veces, repetir_cada_dias`,
+          fecha_envio, status, sent_at, created_at, updated_at, tipo_recordatorio, es_mora, repetir_veces, repetir_cada_dias,
+          interest_cada_dias, interest_tipo, interest_monto`,
         [
           receivableId,
           storeId,
@@ -210,7 +260,11 @@ export async function createReminder(data) {
           normBinance,
           datosContacto || storePhone,
           fechaEnvioI,
+          tipo,
           safeEsMora,
+          intCadaDias,
+          intTipo,
+          intMonto,
         ]
       );
       rows.push(result.rows[0]);
@@ -262,9 +316,13 @@ export async function updateReminder(reminderId, storeId, data) {
     datosContacto,
     fechaEnvio,
     status,
+    tipoRecordatorio,
     esMora,
     repetirVeces,
     repetirCadaDias,
+    interestCadaDias,
+    interestTipo,
+    interestMonto,
   } = data;
 
   const setClauses = [];
@@ -305,9 +363,46 @@ export async function updateReminder(reminderId, storeId, data) {
     setClauses.push(`datos_contacto = $${idx++}`);
     params.push(datosContacto || storePhone);
   }
-  if (esMora !== undefined) {
+  if (tipoRecordatorio !== undefined && (tipoRecordatorio === 'aviso' || tipoRecordatorio === 'mora')) {
+    if (tipoRecordatorio === 'mora') {
+      const existingRem = await getReminderById(reminderId, storeId);
+      const yaEsMora = existingRem?.tipoRecordatorio === 'mora';
+      if (existingRem && !yaEsMora) {
+        const avisoCheck = await query(
+          `SELECT 1 FROM receivable_reminders
+           WHERE receivable_id = $1 AND store_id = $2 AND tipo_recordatorio = 'aviso' AND id != $3
+           LIMIT 1`,
+          [existingRem.receivableId, storeId, reminderId]
+        );
+        if (avisoCheck.rows.length === 0) {
+          throw new Error('Para cambiar a recordatorio por mora, debe existir al menos un recordatorio de tipo "solo para avisar"');
+        }
+      }
+    }
+    setClauses.push(`tipo_recordatorio = $${idx++}`);
+    params.push(tipoRecordatorio);
+    setClauses.push(`es_mora = $${idx++}`);
+    params.push(tipoRecordatorio === 'mora');
+  } else if (esMora !== undefined) {
+    if (esMora === true) {
+      const existingRem = await getReminderById(reminderId, storeId);
+      const yaEsMora = existingRem?.tipoRecordatorio === 'mora';
+      if (existingRem && !yaEsMora) {
+        const avisoCheck = await query(
+          `SELECT 1 FROM receivable_reminders
+           WHERE receivable_id = $1 AND store_id = $2 AND tipo_recordatorio = 'aviso' AND id != $3
+           LIMIT 1`,
+          [existingRem.receivableId, storeId, reminderId]
+        );
+        if (avisoCheck.rows.length === 0) {
+          throw new Error('Para cambiar a recordatorio por mora, debe existir al menos un recordatorio de tipo "solo para avisar"');
+        }
+      }
+    }
     setClauses.push(`es_mora = $${idx++}`);
     params.push(esMora === true);
+    setClauses.push(`tipo_recordatorio = $${idx++}`);
+    params.push(esMora === true ? 'mora' : 'aviso');
   }
   if (repetirVeces !== undefined) {
     setClauses.push(`repetir_veces = $${idx++}`);
@@ -318,6 +413,23 @@ export async function updateReminder(reminderId, storeId, data) {
     setClauses.push(`repetir_cada_dias = $${idx++}`);
     const safe = typeof repetirCadaDias === 'number' && repetirCadaDias > 0 ? Math.floor(repetirCadaDias) : 0;
     params.push(safe);
+  }
+  if (interestCadaDias !== undefined) {
+    const val = interestCadaDias != null && !Number.isNaN(parseInt(interestCadaDias, 10)) && parseInt(interestCadaDias, 10) > 0
+      ? parseInt(interestCadaDias, 10) : null;
+    setClauses.push(`interest_cada_dias = $${idx++}`);
+    params.push(val);
+  }
+  if (interestTipo !== undefined) {
+    const val = (interestTipo === 'fijo' || interestTipo === 'porcentaje') ? interestTipo : null;
+    setClauses.push(`interest_tipo = $${idx++}`);
+    params.push(val);
+  }
+  if (interestMonto !== undefined) {
+    const val = interestMonto != null && !Number.isNaN(parseFloat(interestMonto)) && parseFloat(interestMonto) >= 0
+      ? parseFloat(interestMonto) : null;
+    setClauses.push(`interest_monto = $${idx++}`);
+    params.push(val);
   }
   if (fechaEnvio !== undefined) {
     setClauses.push(`fecha_envio = $${idx++}::date`);
@@ -341,7 +453,8 @@ export async function updateReminder(reminderId, storeId, data) {
      WHERE id = $${idx} AND store_id = $${idx + 1}
      RETURNING id, receivable_id, store_id, customer_name, store_name, invoice_or_account,
        fecha_vencimiento, datos_pagomovil, datos_transferencia, datos_binance, datos_contacto,
-       fecha_envio, status, sent_at, created_at, updated_at`,
+       fecha_envio, status, sent_at, created_at, updated_at, tipo_recordatorio, es_mora,
+       repetir_veces, repetir_cada_dias, interest_cada_dias, interest_tipo, interest_monto`,
     params
   );
 
@@ -379,7 +492,8 @@ export async function getReminderById(reminderId, storeId) {
   const result = await query(
     `SELECT rr.id, rr.receivable_id, rr.store_id, rr.customer_name, rr.store_name, rr.invoice_or_account,
        rr.fecha_vencimiento, rr.datos_pagomovil, rr.datos_transferencia, rr.datos_binance, rr.datos_contacto,
-       rr.fecha_envio, rr.status, rr.sent_at, rr.created_at, rr.updated_at
+       rr.fecha_envio, rr.status, rr.sent_at, rr.created_at, rr.updated_at, rr.tipo_recordatorio, rr.es_mora,
+       rr.repetir_veces, rr.repetir_cada_dias, rr.interest_cada_dias, rr.interest_tipo, rr.interest_monto
      FROM receivable_reminders rr
      WHERE rr.id = $1 AND rr.store_id = $2`,
     [reminderId, storeId]
@@ -400,7 +514,9 @@ export async function deleteReminder(reminderId, storeId) {
 }
 
 /**
- * Obtener recordatorios pendientes para enviar hoy (para job/cron)
+ * Obtener recordatorios pendientes para enviar hoy (para job/cron).
+ * Incluye datos de la cuenta: description, invoice_number, receivable_number, request_id
+ * para armar variables del template recordatorio_factura_detalles_sin_boton_sin_monto.
  * @param {string} [storeId] - Opcional: filtrar por tienda
  * @returns {Promise<Array>}
  */
@@ -408,11 +524,14 @@ export async function getRemindersToSendToday(storeId = null) {
   let sql = `
     SELECT rr.id, rr.receivable_id, rr.store_id, rr.customer_name, rr.store_name, rr.invoice_or_account,
        rr.fecha_vencimiento, rr.datos_pagomovil, rr.datos_transferencia, rr.datos_binance, rr.datos_contacto,
-       rr.fecha_envio, r.customer_phone
+       rr.fecha_envio, rr.tipo_recordatorio, rr.es_mora, r.customer_phone,
+       r.description AS receivable_description, r.invoice_number AS receivable_invoice_number,
+       r.receivable_number AS receivable_number, r.request_id
      FROM receivable_reminders rr
      INNER JOIN receivables r ON r.id = rr.receivable_id AND r.store_id = rr.store_id
      WHERE rr.status = 'pending' AND rr.sent_at IS NULL
        AND rr.fecha_envio = CURRENT_DATE
+       AND rr.tipo_recordatorio = 'aviso'
        AND r.status = 'pending'
   `;
   const params = [];
@@ -423,7 +542,62 @@ export async function getRemindersToSendToday(storeId = null) {
   sql += ` ORDER BY rr.fecha_envio, rr.created_at`;
 
   const result = await query(sql, params);
-  return result.rows.map(formatReminder);
+  return result.rows.map((row) => {
+    const rem = formatReminder(row);
+    rem.receivableDescription = row.receivable_description != null ? String(row.receivable_description).trim() : null;
+    rem.receivableInvoiceNumber = row.receivable_invoice_number != null ? String(row.receivable_invoice_number).trim() : null;
+    rem.receivableNumber = row.receivable_number != null ? parseInt(row.receivable_number, 10) : null;
+    rem.requestId = row.request_id || null;
+    return rem;
+  });
+}
+
+/**
+ * Obtener recordatorios de mora pendientes para enviar hoy (para job/cron).
+ * Similar a getRemindersToSendToday pero tipo_recordatorio = 'mora'.
+ * Incluye amount, totalPaid, dueDate, interest config y datos de cuenta para template mora.
+ * @param {string} [storeId] - Opcional: filtrar por tienda
+ * @returns {Promise<Array>}
+ */
+export async function getRemindersToSendTodayMora(storeId = null) {
+  let sql = `
+    SELECT rr.id, rr.receivable_id, rr.store_id, rr.customer_name, rr.store_name, rr.invoice_or_account,
+       rr.fecha_vencimiento, rr.datos_pagomovil, rr.datos_transferencia, rr.datos_binance, rr.datos_contacto,
+       rr.fecha_envio, rr.tipo_recordatorio, rr.es_mora, rr.interest_cada_dias, rr.interest_tipo, rr.interest_monto,
+       r.customer_phone,
+       r.amount, r.due_date,
+       r.description AS receivable_description, r.invoice_number AS receivable_invoice_number,
+       r.receivable_number AS receivable_number, r.request_id,
+       COALESCE((SELECT SUM(rp.amount)::numeric FROM receivable_payments rp WHERE rp.receivable_id = r.id), 0)::float AS total_paid
+     FROM receivable_reminders rr
+     INNER JOIN receivables r ON r.id = rr.receivable_id AND r.store_id = rr.store_id
+     WHERE rr.status = 'pending' AND rr.sent_at IS NULL
+       AND rr.fecha_envio = CURRENT_DATE
+       AND rr.tipo_recordatorio = 'mora'
+       AND r.status = 'pending'
+  `;
+  const params = [];
+  if (storeId) {
+    params.push(storeId);
+    sql += ` AND rr.store_id = $${params.length}`;
+  }
+  sql += ` ORDER BY rr.fecha_envio, rr.created_at`;
+
+  const result = await query(sql, params);
+  return result.rows.map((row) => {
+    const rem = formatReminder(row);
+    rem.receivableDescription = row.receivable_description != null ? String(row.receivable_description).trim() : null;
+    rem.receivableInvoiceNumber = row.receivable_invoice_number != null ? String(row.receivable_invoice_number).trim() : null;
+    rem.receivableNumber = row.receivable_number != null ? parseInt(row.receivable_number, 10) : null;
+    rem.requestId = row.request_id || null;
+    rem.amount = parseFloat(row.amount) || 0;
+    rem.totalPaid = parseFloat(row.total_paid) || 0;
+    rem.dueDate = toIsoDateString(row.due_date);
+    rem.interestCadaDias = row.interest_cada_dias != null ? parseInt(row.interest_cada_dias, 10) : null;
+    rem.interestTipo = row.interest_tipo === 'fijo' || row.interest_tipo === 'porcentaje' ? row.interest_tipo : null;
+    rem.interestMonto = row.interest_monto != null ? parseFloat(row.interest_monto) : null;
+    return rem;
+  });
 }
 
 /**
@@ -435,4 +609,22 @@ export async function markReminderSent(reminderId) {
      WHERE id = $1`,
     [reminderId]
   );
+}
+
+/**
+ * Cancelar todos los recordatorios pendientes de una cuenta por cobrar.
+ * Se llama cuando la cuenta se marca como cobrada para que no se envíen.
+ * @param {string} receivableId
+ * @param {string} storeId
+ * @returns {Promise<number>} Cantidad de recordatorios cancelados
+ */
+export async function cancelPendingRemindersByReceivable(receivableId, storeId) {
+  const result = await query(
+    `UPDATE receivable_reminders
+     SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+     WHERE receivable_id = $1 AND store_id = $2 AND status = 'pending'
+     RETURNING id`,
+    [receivableId, storeId]
+  );
+  return result.rowCount ?? 0;
 }

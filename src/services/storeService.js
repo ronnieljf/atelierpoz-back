@@ -200,6 +200,9 @@ export async function getUserStores(userId) {
       COALESCE(s.iva, 0) as iva,
       COALESCE(s.feature_send_reminder_receivables_whatsapp, false) as feature_send_reminder_receivables_whatsapp,
       COALESCE(s.approved, false) as approved,
+      s.interest_cada_dias,
+      s.interest_tipo,
+      s.interest_monto,
       s.created_at,
       s.updated_at,
       su.is_creator,
@@ -225,6 +228,9 @@ export async function getUserStores(userId) {
     iva: parseFloat(store.iva) || 0,
     feature_send_reminder_receivables_whatsapp: store.feature_send_reminder_receivables_whatsapp ?? false,
     approved: store.approved ?? false,
+    interest_cada_dias: store.interest_cada_dias != null ? parseInt(store.interest_cada_dias, 10) : null,
+    interest_tipo: store.interest_tipo || null,
+    interest_monto: store.interest_monto != null ? parseFloat(store.interest_monto) : null,
     is_creator: store.is_creator,
     phone_number: store.phone_number,
     created_at: store.created_at,
@@ -254,6 +260,9 @@ export async function getUserStoreById(storeId, userId) {
       COALESCE(s.iva, 0) as iva,
       COALESCE(s.feature_send_reminder_receivables_whatsapp, false) as feature_send_reminder_receivables_whatsapp,
       COALESCE(s.approved, false) as approved,
+      s.interest_cada_dias,
+      s.interest_tipo,
+      s.interest_monto,
       s.created_at,
       s.updated_at,
       su.is_creator,
@@ -283,11 +292,63 @@ export async function getUserStoreById(storeId, userId) {
     iva: parseFloat(store.iva) || 0,
     feature_send_reminder_receivables_whatsapp: store.feature_send_reminder_receivables_whatsapp ?? false,
     approved: store.approved ?? false,
+    interest_cada_dias: store.interest_cada_dias != null ? parseInt(store.interest_cada_dias, 10) : null,
+    interest_tipo: store.interest_tipo || null,
+    interest_monto: store.interest_monto != null ? parseFloat(store.interest_monto) : null,
     is_creator: store.is_creator,
     phone_number: store.phone_number,
     created_at: store.created_at,
     updated_at: store.updated_at,
     joined_at: store.joined_at,
+  };
+}
+
+/**
+ * Obtener configuración de interés por mora de una tienda.
+ * @param {string} storeId - ID de la tienda
+ * @returns {Promise<{ cadaDias: number, tipo: 'fijo'|'porcentaje', monto: number }|null>}
+ */
+export async function getStoreInterestConfig(storeId) {
+  const result = await query(
+    `SELECT interest_cada_dias, interest_tipo, interest_monto FROM stores WHERE id = $1`,
+    [storeId]
+  );
+  if (result.rows.length === 0) return null;
+  const r = result.rows[0];
+  const cadaDias = r.interest_cada_dias != null ? parseInt(r.interest_cada_dias, 10) : null;
+  const tipo = r.interest_tipo === 'fijo' || r.interest_tipo === 'porcentaje' ? r.interest_tipo : null;
+  const monto = r.interest_monto != null ? parseFloat(r.interest_monto) : null;
+  if (cadaDias != null && cadaDias > 0 && tipo && monto != null && monto > 0) {
+    return { cadaDias, tipo, monto };
+  }
+  return null;
+}
+
+/**
+ * Obtener email y teléfono de contacto de una tienda (para templates mora).
+ * Usa el creador o el primer usuario con datos.
+ * @param {string} storeId - ID de la tienda
+ * @returns {Promise<{ email: string | null, phoneNumber: string | null }>}
+ */
+export async function getStoreContact(storeId) {
+  const result = await query(
+    `SELECT u.email,
+      (SELECT su.phone_number FROM store_users su
+       WHERE su.store_id = $1 AND su.phone_number IS NOT NULL AND su.phone_number != ''
+       ORDER BY su.is_creator DESC NULLS LAST
+       LIMIT 1) as phone_number
+     FROM store_users su
+     INNER JOIN users u ON u.id = su.user_id
+     WHERE su.store_id = $1
+     ORDER BY su.is_creator DESC NULLS LAST
+     LIMIT 1`,
+    [storeId]
+  );
+  if (result.rows.length === 0) return { email: null, phoneNumber: null };
+  const row = result.rows[0];
+  return {
+    email: row.email?.trim() || null,
+    phoneNumber: row.phone_number?.trim() || null,
   };
 }
 
@@ -462,14 +523,16 @@ export async function createStore(storeData, creatorUserId = null, createStoreUs
  * @returns {Promise<Object>} Tienda actualizada
  */
 export async function updateStore(storeId, storeData) {
-  const { name, state, logo, store_id: storeIdSlug, instagram, tiktok, description, location, iva, feature_send_reminder_receivables_whatsapp } = storeData;
+  const { name, state, logo, store_id: storeIdSlug, instagram, tiktok, description, location, iva, feature_send_reminder_receivables_whatsapp, interest_cada_dias, interest_tipo, interest_monto } = storeData;
   const updates = [];
   const values = [];
   let paramIndex = 1;
 
   // Verificar que la tienda existe
   const result = await query(
-    'SELECT id, name, state, logo, store_id, instagram, tiktok, description, location, COALESCE(iva, 0) as iva, COALESCE(feature_send_reminder_receivables_whatsapp, false) as feature_send_reminder_receivables_whatsapp, created_at, updated_at FROM stores WHERE id = $1',
+    `SELECT id, name, state, logo, store_id, instagram, tiktok, description, location, COALESCE(iva, 0) as iva,
+      COALESCE(feature_send_reminder_receivables_whatsapp, false) as feature_send_reminder_receivables_whatsapp,
+      interest_cada_dias, interest_tipo, interest_monto, created_at, updated_at FROM stores WHERE id = $1`,
     [storeId]
   );
 
@@ -577,38 +640,30 @@ export async function updateStore(storeId, storeData) {
     paramIndex++;
   }
 
-  if (updates.length === 0) {
-    const row = result.rows[0];
-    return {
-      id: row.id,
-      store_id: row.store_id ?? null,
-      name: row.name,
-      state: row.state,
-      logo: row.logo ?? null,
-      instagram: row.instagram ?? null,
-      tiktok: row.tiktok ?? null,
-      description: row.description ?? null,
-      location: row.location ?? null,
-      iva: parseFloat(row.iva) || 0,
-      feature_send_reminder_receivables_whatsapp: row.feature_send_reminder_receivables_whatsapp ?? false,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    };
+  if (interest_cada_dias !== undefined) {
+    const val = interest_cada_dias != null && !Number.isNaN(parseInt(interest_cada_dias, 10)) && parseInt(interest_cada_dias, 10) > 0
+      ? parseInt(interest_cada_dias, 10) : null;
+    updates.push(`interest_cada_dias = $${paramIndex}`);
+    values.push(val);
+    paramIndex++;
   }
 
-  updates.push(`updated_at = CURRENT_TIMESTAMP`);
-  values.push(storeId);
+  if (interest_tipo !== undefined) {
+    const val = (interest_tipo === 'fijo' || interest_tipo === 'porcentaje') ? interest_tipo : null;
+    updates.push(`interest_tipo = $${paramIndex}`);
+    values.push(val);
+    paramIndex++;
+  }
 
-  const updateResult = await query(
-    `UPDATE stores
-     SET ${updates.join(', ')}
-     WHERE id = $${paramIndex}
-     RETURNING id, store_id, name, state, logo, instagram, tiktok, description, location, COALESCE(iva, 0) as iva, COALESCE(feature_send_reminder_receivables_whatsapp, false) as feature_send_reminder_receivables_whatsapp, created_at, updated_at`,
-    values
-  );
+  if (interest_monto !== undefined) {
+    const val = interest_monto != null && !Number.isNaN(parseFloat(interest_monto)) && parseFloat(interest_monto) >= 0
+      ? parseFloat(interest_monto) : null;
+    updates.push(`interest_monto = $${paramIndex}`);
+    values.push(val);
+    paramIndex++;
+  }
 
-  const row = updateResult.rows[0];
-  return {
+  const formatStoreRow = (row) => ({
     id: row.id,
     store_id: row.store_id ?? null,
     name: row.name,
@@ -620,9 +675,29 @@ export async function updateStore(storeId, storeData) {
     location: row.location ?? null,
     iva: parseFloat(row.iva) || 0,
     feature_send_reminder_receivables_whatsapp: row.feature_send_reminder_receivables_whatsapp ?? false,
+    interest_cada_dias: row.interest_cada_dias != null ? parseInt(row.interest_cada_dias, 10) : null,
+    interest_tipo: row.interest_tipo || null,
+    interest_monto: row.interest_monto != null ? parseFloat(row.interest_monto) : null,
     created_at: row.created_at,
     updated_at: row.updated_at,
-  };
+  });
+
+  if (updates.length === 0) {
+    return formatStoreRow(result.rows[0]);
+  }
+
+  updates.push(`updated_at = CURRENT_TIMESTAMP`);
+  values.push(storeId);
+
+  const updateResult = await query(
+    `UPDATE stores
+     SET ${updates.join(', ')}
+     WHERE id = $${paramIndex}
+     RETURNING id, store_id, name, state, logo, instagram, tiktok, description, location, COALESCE(iva, 0) as iva, COALESCE(feature_send_reminder_receivables_whatsapp, false) as feature_send_reminder_receivables_whatsapp, interest_cada_dias, interest_tipo, interest_monto, created_at, updated_at`,
+    values
+  );
+
+  return formatStoreRow(updateResult.rows[0]);
 }
 
 /**

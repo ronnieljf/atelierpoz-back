@@ -1,5 +1,6 @@
 import { getRemindersToSendToday, markReminderSent } from '../services/receivableReminderService.js';
 import { sendWhatsAppTemplate } from '../services/whatsappService.js';
+import { getRequestById } from '../services/requestService.js';
 import { query } from '../config/database.js';
 
 function formatFechaHumana(fecha) {
@@ -22,19 +23,41 @@ function formatFechaHumana(fecha) {
 }
 
 /**
+ * Construir variable {{8}}: lista de productos del pedido o descripcion de la cuenta.
+ * Formato productos: "cant nombre ($precio) • ...". Máx ~900 chars para WhatsApp.
+ */
+async function buildProductListOrDescription(requestId, storeId, description) {
+  if (requestId && storeId) {
+    const req = await getRequestById(requestId, storeId);
+    if (req && Array.isArray(req.items) && req.items.length > 0) {
+      const lines = req.items.map((it) => {
+        const name = (it.productName || 'Producto').trim().slice(0, 30);
+        const qty = typeof it.quantity === 'number' ? it.quantity : 1;
+        const total = typeof it.totalPrice === 'number' ? it.totalPrice : (it.basePrice || 0) * qty;
+        return `${qty} ${name} ($${total.toFixed(2)})`;
+      });
+      const text = lines.join(' • ');
+      return text.length > 900 ? text.slice(0, 897) + '...' : text;
+    }
+  }
+  return (description && String(description).trim()) || '';
+}
+
+/**
  * Enviar recordatorios de factura programados para hoy usando la plantilla
  * recordatorio_factura_detalles_sin_boton_sin_monto.
  *
- * Template:
- * 1: customer_name
- * 2: store_name
- * 3: invoice_or_account
- * 4: fecha_vencimiento (humano)
- * 5: datos_pagomovil
- * 6: datos_transferencia
- * 7: datos_binance
- * 8: datos_contacto
- * 9: datos_contacto
+ * Template (10 variables):
+ * 1: nombre del cliente
+ * 2: nombre de la tienda
+ * 3: cuenta/factura + numero factura si tiene, sino la cuenta
+ * 4: fecha vencimiento si tiene, sino guion
+ * 5: pagomovil
+ * 6: transferencia
+ * 7: binance
+ * 8: lista de productos si tiene, sino descripcion de la cuenta
+ * 9: datos contacto
+ * 10: datos contacto
  */
 export async function sendDueInvoiceReminders(storeId = null) {
   const reminders = await getRemindersToSendToday(storeId);
@@ -57,19 +80,36 @@ export async function sendDueInvoiceReminders(storeId = null) {
     try {
       const customerName = (r.customerName || 'Cliente').trim();
       const storeName = (r.storeName || 'Tienda').trim();
-      const invoiceOrAccount = (r.invoiceOrAccount || '').trim();
       const fechaHumana = formatFechaHumana(r.fechaVencimiento);
 
+      // {{3}} Factura #numero si tiene factura, sino Cuenta #numero
+      let var3 = '';
+      if (r.receivableInvoiceNumber) {
+        var3 = `su factura #${r.receivableInvoiceNumber}`;
+      } else if (r.receivableNumber != null) {
+        var3 = `su cuenta #${r.receivableNumber}`;
+      } else {
+        var3 = (r.invoiceOrAccount || '').trim() || 's/n';
+      }
+
+      // {{8}} lista de productos si tiene, sino descripcion de la cuenta
+      const var8 = await buildProductListOrDescription(
+        r.requestId,
+        r.storeId,
+        r.receivableDescription
+      );
+
       const bodyParams = [
-        customerName,                       // {{1}}
-        storeName,                          // {{2}}
-        invoiceOrAccount || 's/n',          // {{3}}
-        fechaHumana || 'sin fecha',         // {{4}}
-        r.datosPagomovil || '',             // {{5}}
-        r.datosTransferencia || '',         // {{6}}
-        r.datosBinance || '',               // {{7}}
-        r.datosContacto || '',              // {{8}}
-        r.datosContacto || '',              // {{9}}
+        customerName,              // {{1}} nombre del cliente
+        storeName,                 // {{2}} nombre de la tienda
+        var3,                      // {{3}} cuenta/factura + factura
+        fechaHumana || '-',        // {{4}} fecha vencimiento o guion
+        r.datosPagomovil || '',    // {{5}} pagomovil
+        r.datosTransferencia || '', // {{6}} transferencia
+        r.datosBinance || '',      // {{7}} binance
+        var8,                      // {{8}} productos o descripcion
+        r.datosContacto || '',     // {{9}} datos contacto
+        r.datosContacto || '',     // {{10}} datos contacto
       ];
 
       const sendResult = await sendWhatsAppTemplate(

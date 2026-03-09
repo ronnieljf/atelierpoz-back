@@ -168,7 +168,7 @@ export async function getStoreById(req, res, next) {
 export async function updateStoreHandler(req, res, next) {
   try {
     const { id } = req.params;
-    const { name, state, store_id, instagram, tiktok, description, location, iva } = req.body;
+    const { name, state, store_id, instagram, tiktok, description, location, iva, interest_cada_dias, interest_tipo, interest_monto } = req.body;
     const userId = req.user.id;
 
     const userStore = await getUserStoreById(id, userId);
@@ -210,6 +210,9 @@ export async function updateStoreHandler(req, res, next) {
       description,
       location,
       iva,
+      interest_cada_dias,
+      interest_tipo,
+      interest_monto,
     });
 
     res.json({

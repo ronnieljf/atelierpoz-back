@@ -31,6 +31,7 @@ import cron from 'node-cron';
 import { flowPost } from './controllers/flowController.js';
 import { runReceivableRemindersJob } from './services/reminderService.js';
 import { sendDueInvoiceReminders } from './jobs/receivableInvoiceRemindersJob.js';
+import { sendDueMoraReminders } from './jobs/receivableMoraRemindersJob.js';
 
 // Cargar variables de entorno
 dotenv.config();
@@ -113,6 +114,15 @@ async function runReminderJob() {
     );
   } catch (err) {
     console.error('[Recordatorios facturas] Error en job:', err?.message || err);
+  }
+
+  try {
+    const moraResult = await sendDueMoraReminders();
+    console.log(
+      `[Recordatorios mora] Job ejecutado: ${moraResult.sent}/${moraResult.total} enviados, ${moraResult.failed} fallidos`
+    );
+  } catch (err) {
+    console.error('[Recordatorios mora] Error en job:', err?.message || err);
   }
 }
 

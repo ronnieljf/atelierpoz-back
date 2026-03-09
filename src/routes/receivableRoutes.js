@@ -213,9 +213,13 @@ const createReminderValidation = [
   body('datosTransferencia').optional().trim().isLength({ max: 2000 }),
   body('datosBinance').optional().trim().isLength({ max: 2000 }),
   body('datosContacto').optional().trim().isLength({ max: 1000 }),
+  body('tipoRecordatorio').optional().isIn(['aviso', 'mora']).withMessage('tipoRecordatorio debe ser aviso o mora'),
   body('esMora').optional().isBoolean(),
   body('repetirVeces').optional().isInt({ min: 0 }),
   body('repetirCadaDias').optional().isInt({ min: 0 }),
+  body('interestCadaDias').optional().isInt({ min: 1 }),
+  body('interestTipo').optional().isIn(['fijo', 'porcentaje']),
+  body('interestMonto').optional().isFloat({ min: 0 }),
 ];
 router.post('/:id/reminders', requirePermission('receivables.edit', storeIdQOrB), createReminderValidation, createReceivableReminderHandler);
 
@@ -234,9 +238,13 @@ const updateReminderValidation = [
   body('datosTransferencia').optional().trim().isLength({ max: 2000 }),
   body('datosBinance').optional().trim().isLength({ max: 2000 }),
   body('datosContacto').optional().trim().isLength({ max: 1000 }),
+  body('tipoRecordatorio').optional().isIn(['aviso', 'mora']).withMessage('tipoRecordatorio debe ser aviso o mora'),
   body('esMora').optional().isBoolean(),
   body('repetirVeces').optional().isInt({ min: 0 }),
   body('repetirCadaDias').optional().isInt({ min: 0 }),
+  body('interestCadaDias').optional().isInt({ min: 1 }),
+  body('interestTipo').optional().isIn(['fijo', 'porcentaje']),
+  body('interestMonto').optional().isFloat({ min: 0 }),
   body('status').optional().isIn(['pending', 'sent', 'cancelled']),
 ];
 router.put('/:id/reminders/:reminderId', requirePermission('receivables.edit', storeIdQOrB), updateReminderValidation, updateReceivableReminderHandler);
@@ -275,7 +283,7 @@ router.put('/:id/items', requirePermission('receivables.edit', storeIdQOrB), upd
 
 /**
  * PUT /api/receivables/:id
- * Body: { storeId, customerName?, customerPhone?, description?, amount?, currency?, status?, dueDate? }
+ * Body: { storeId, customerName?, customerPhone?, description?, amount?, currency?, status?, dueDate?, invoiceNumber? }
  */
 const updateValidation = [
   body('storeId').notEmpty().withMessage('storeId es requerido').isUUID().withMessage('storeId debe ser UUID'),
@@ -286,6 +294,7 @@ const updateValidation = [
   body('currency').optional().isIn(['USD', 'EUR', 'VES']),
   body('status').optional().isIn(['pending', 'paid', 'cancelled']).withMessage('Estado debe ser pending, paid o cancelled'),
   body('dueDate').optional().isISO8601().withMessage('dueDate debe ser una fecha válida (YYYY-MM-DD)'),
+  body('invoiceNumber').optional().trim().isLength({ max: 100 }),
 ];
 router.put('/:id', requirePermission('receivables.edit', storeIdQOrB), updateValidation, updateReceivableHandler);
 

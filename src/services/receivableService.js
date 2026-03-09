@@ -5,6 +5,8 @@
 
 import { query, getClient } from '../config/database.js';
 import { updateRequestStatus, getRequestById, decreaseStockForRequest, increaseStockForRequest, updateRequestItemsForReceivable } from './requestService.js';
+import { cancelPendingRemindersByReceivable } from './receivableReminderService.js';
+import { getStoreInterestConfig } from './storeService.js';
 
 function toIsoDateString(value) {
   if (!value) return null;
@@ -14,6 +16,63 @@ function toIsoDateString(value) {
   const d = new Date(s);
   if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
   return s;
+}
+
+/**
+ * Calcular interés por mora para una cuenta pendiente vencida.
+ * @param {Object} config - { cadaDias, tipo: 'fijo'|'porcentaje', monto }
+ * @param {number} amount - Monto original de la cuenta
+ * @param {string|null} dueDate - Fecha de vencimiento YYYY-MM-DD
+ * @param {string} [asOfDate] - Fecha de referencia YYYY-MM-DD (default: hoy)
+ * @returns {{ interestAmount: number, totalWithInterest: number }|null} null si no aplica interés
+ */
+export function computeInterestForReceivable(config, amount, dueDate, asOfDate = null) {
+  if (!config || !dueDate || amount == null || Number.isNaN(parseFloat(amount))) return null;
+  const refStr = asOfDate || new Date().toISOString().slice(0, 10);
+  const due = dueDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const ref = refStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!due || !ref) return null;
+  const dueMs = new Date(parseInt(due[1], 10), parseInt(due[2], 10) - 1, parseInt(due[3], 10)).getTime();
+  const refMs = new Date(parseInt(ref[1], 10), parseInt(ref[2], 10) - 1, parseInt(ref[3], 10)).getTime();
+  const daysOverdue = Math.max(0, Math.floor((refMs - dueMs) / (24 * 60 * 60 * 1000)));
+  if (daysOverdue <= 0) return null;
+  const periods = Math.floor(daysOverdue / config.cadaDias);
+  if (periods < 1) return null;
+  const amt = parseFloat(amount);
+  let interestPerPeriod;
+  if (config.tipo === 'fijo') {
+    interestPerPeriod = config.monto;
+  } else if (config.tipo === 'porcentaje') {
+    interestPerPeriod = amt * (config.monto / 100);
+  } else {
+    return null;
+  }
+  const interestAmount = Math.round(periods * interestPerPeriod * 100) / 100;
+  return { interestAmount };
+}
+
+/**
+ * Enriquecer receivables con interés por mora cuando aplique.
+ * @param {Array} receivables - Array de { amount, dueDate, status, totalPaid?, ... }
+ * @param {string} storeId
+ * @returns {Promise<Array>}
+ */
+async function enrichReceivablesWithInterest(receivables, storeId) {
+  const config = await getStoreInterestConfig(storeId);
+  if (!config) return receivables;
+  const today = new Date().toISOString().slice(0, 10);
+  return receivables.map((r) => {
+    if (r.status !== 'pending' || !r.dueDate) return r;
+    const totalPaid = r.totalPaid != null ? parseFloat(r.totalPaid) : 0;
+    const balance = Math.max(0, parseFloat(r.amount) - totalPaid);
+    const computed = computeInterestForReceivable(config, r.amount, r.dueDate, today);
+    if (!computed) return r;
+    return {
+      ...r,
+      interestAmount: computed.interestAmount,
+      totalWithInterest: Math.round((balance + computed.interestAmount) * 100) / 100,
+    };
+  });
 }
 
 /**
@@ -390,11 +449,13 @@ export async function getReceivablesByStore(storeId, options = {}) {
   }
 
   const result = await query(sql, params);
+  let receivables = result.rows.map((row) => ({
+    ...formatReceivable(row),
+    totalPaid: parseFloat(row.total_paid) || 0,
+  }));
+  receivables = await enrichReceivablesWithInterest(receivables, storeId);
   return {
-    receivables: result.rows.map((row) => ({
-      ...formatReceivable(row),
-      totalPaid: parseFloat(row.total_paid) || 0,
-    })),
+    receivables,
     total,
     totalAmountByCurrency,
   };
@@ -429,14 +490,16 @@ export async function getReceivablesByStoreWithPayments(storeId) {
 }
 
 /**
- * Obtener una cuenta por cobrar por ID (y store para permisos)
+ * Obtener una cuenta por cobrar por ID (y store para permisos).
+ * Incluye totalPaid y, si aplica, interestAmount y totalWithInterest.
  */
 export async function getReceivableById(receivableId, storeId) {
   const result = await query(
     `SELECT r.id, r.store_id, r.receivable_number, r.created_by, r.updated_by, r.customer_name, r.customer_phone, r.description,
       r.amount, r.currency, r.status, r.request_id, r.paid_at, r.created_at, r.updated_at, r.invoice_number, r.due_date,
       s.name as store_name,
-      u_created.name as created_by_name, u_updated.name as updated_by_name
+      u_created.name as created_by_name, u_updated.name as updated_by_name,
+      COALESCE((SELECT SUM(rp.amount)::numeric FROM receivable_payments rp WHERE rp.receivable_id = r.id), 0)::float AS total_paid
      FROM receivables r
      LEFT JOIN stores s ON s.id = r.store_id
      LEFT JOIN users u_created ON u_created.id = r.created_by
@@ -446,7 +509,12 @@ export async function getReceivableById(receivableId, storeId) {
   );
 
   if (result.rows.length === 0) return null;
-  return formatReceivable(result.rows[0]);
+  const rec = {
+    ...formatReceivable(result.rows[0]),
+    totalPaid: parseFloat(result.rows[0].total_paid) || 0,
+  };
+  const enriched = await enrichReceivablesWithInterest([rec], storeId);
+  return enriched[0];
 }
 
 /**
@@ -642,7 +710,7 @@ export async function reopenReceivable(receivableId, storeId, updatedByUserId) {
  * @param {string} [updatedByUserId] - Usuario que realiza la actualización (para trazabilidad)
  */
 export async function updateReceivable(receivableId, storeId, updates, updatedByUserId = null) {
-  const allowed = ['customerName', 'customerPhone', 'description', 'amount', 'currency', 'status', 'dueDate'];
+  const allowed = ['customerName', 'customerPhone', 'description', 'amount', 'currency', 'status', 'dueDate', 'invoiceNumber'];
   const dbFields = {
     customerName: 'customer_name',
     customerPhone: 'customer_phone',
@@ -651,6 +719,7 @@ export async function updateReceivable(receivableId, storeId, updates, updatedBy
     currency: 'currency',
     status: 'status',
     dueDate: 'due_date',
+    invoiceNumber: 'invoice_number',
   };
 
   // Obtener estado anterior para logs y para restaurar stock al cancelar
@@ -721,6 +790,11 @@ export async function updateReceivable(receivableId, storeId, updates, updatedBy
     values.push(updates.dueDate || null);
     paramIdx++;
   }
+  if (updates.invoiceNumber !== undefined) {
+    setClauses.push(`invoice_number = $${paramIdx}`);
+    values.push(updates.invoiceNumber && String(updates.invoiceNumber).trim() ? String(updates.invoiceNumber).trim() : null);
+    paramIdx++;
+  }
 
   if (setClauses.length === 0) {
     return getReceivableById(receivableId, storeId);
@@ -732,7 +806,7 @@ export async function updateReceivable(receivableId, storeId, updates, updatedBy
   const result = await query(
     `UPDATE receivables SET ${setClauses.join(', ')} WHERE id = $${paramIdx} AND store_id = $${paramIdx + 1}
      RETURNING id, store_id, receivable_number, created_by, updated_by, customer_name, customer_phone, description,
-       amount, currency, status, request_id, paid_at, created_at, updated_at`,
+       amount, currency, status, request_id, paid_at, created_at, updated_at, invoice_number, due_date`,
     values
   );
 
@@ -751,11 +825,14 @@ export async function updateReceivable(receivableId, storeId, updates, updatedBy
     );
   }
 
-  // Al marcar la cuenta como cobrada: si tiene pedido vinculado, marcar el pedido como completado.
+  // Al marcar la cuenta como cobrada: cancelar recordatorios pendientes y, si tiene pedido vinculado, marcar el pedido como completado.
   // El stock ya fue descontado UNA VEZ al crear la cuenta desde el pedido; updateRequestStatus
   // no vuelve a descontar porque detecta que existe una receivable para ese request_id.
-  if (updates.status === 'paid' && row.request_id) {
-    await updateRequestStatus(row.request_id, storeId, 'completed');
+  if (updates.status === 'paid') {
+    await cancelPendingRemindersByReceivable(receivableId, storeId);
+    if (row.request_id) {
+      await updateRequestStatus(row.request_id, storeId, 'completed');
+    }
   }
 
   // Al cancelar una cuenta por cobrar vinculada a un pedido, restaurar el stock solo si el pedido no está cancelado
@@ -866,6 +943,7 @@ export async function createReceivablePayment(receivableId, storeId, data, creat
         [receivableId, createdBy]
       );
     }
+    await cancelPendingRemindersByReceivable(receivableId, storeId);
     if (receivable.requestId) {
       await updateRequestStatus(receivable.requestId, storeId, 'completed');
     }

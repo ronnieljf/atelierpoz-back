@@ -1132,9 +1132,13 @@ export async function createReceivableReminderHandler(req, res, next) {
       datosTransferencia,
       datosBinance,
       datosContacto,
+      tipoRecordatorio,
       esMora,
       repetirVeces,
       repetirCadaDias,
+      interestCadaDias,
+      interestTipo,
+      interestMonto,
     } = req.body;
 
     if (!storeId) {
@@ -1161,9 +1165,13 @@ export async function createReceivableReminderHandler(req, res, next) {
       datosTransferencia: datosTransferencia || undefined,
       datosBinance: datosBinance || undefined,
       datosContacto: datosContacto || undefined,
-      esMora: esMora === true,
+      tipoRecordatorio: (tipoRecordatorio === 'aviso' || tipoRecordatorio === 'mora') ? tipoRecordatorio : undefined,
+      esMora: tipoRecordatorio ? undefined : (esMora === true),
       repetirVeces: repetirVeces != null ? Number(repetirVeces) : undefined,
       repetirCadaDias: repetirCadaDias != null ? Number(repetirCadaDias) : undefined,
+      interestCadaDias: interestCadaDias != null ? Number(interestCadaDias) : undefined,
+      interestTipo: (interestTipo === 'fijo' || interestTipo === 'porcentaje') ? interestTipo : undefined,
+      interestMonto: interestMonto != null ? parseFloat(interestMonto) : undefined,
     });
     return res.json({ success: true, reminders });
   } catch (error) {
@@ -1208,9 +1216,13 @@ export async function updateReceivableReminderHandler(req, res, next) {
       datosBinance: data.datosBinance,
       datosContacto: data.datosContacto,
       fechaEnvio: data.fechaEnvio,
-      esMora: data.esMora,
+      tipoRecordatorio: (data.tipoRecordatorio === 'aviso' || data.tipoRecordatorio === 'mora') ? data.tipoRecordatorio : undefined,
+      esMora: data.tipoRecordatorio ? undefined : data.esMora,
       repetirVeces: data.repetirVeces,
       repetirCadaDias: data.repetirCadaDias,
+      interestCadaDias: data.interestCadaDias != null ? Number(data.interestCadaDias) : undefined,
+      interestTipo: (data.interestTipo === 'fijo' || data.interestTipo === 'porcentaje') ? data.interestTipo : undefined,
+      interestMonto: data.interestMonto != null ? parseFloat(data.interestMonto) : undefined,
       status: data.status,
     });
     if (!reminder) {
