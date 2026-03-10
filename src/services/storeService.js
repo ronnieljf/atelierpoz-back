@@ -316,7 +316,8 @@ export async function getStoreInterestConfig(storeId) {
   if (result.rows.length === 0) return null;
   const r = result.rows[0];
   const cadaDias = r.interest_cada_dias != null ? parseInt(r.interest_cada_dias, 10) : null;
-  const tipo = r.interest_tipo === 'fijo' || r.interest_tipo === 'porcentaje' ? r.interest_tipo : null;
+  const tipoRaw = (r.interest_tipo || '').toString().toLowerCase().trim();
+  const tipo = tipoRaw === 'fijo' || tipoRaw === 'porcentaje' ? tipoRaw : null;
   const monto = r.interest_monto != null ? parseFloat(r.interest_monto) : null;
   if (cadaDias != null && cadaDias > 0 && tipo && monto != null && monto > 0) {
     return { cadaDias, tipo, monto };

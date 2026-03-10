@@ -28,6 +28,8 @@ function toIsoDateString(value) {
  */
 export function computeInterestForReceivable(config, amount, dueDate, asOfDate = null) {
   if (!config || !dueDate || amount == null || Number.isNaN(parseFloat(amount))) return null;
+  const cadaDias = config.cadaDias != null ? parseInt(config.cadaDias, 10) : 0;
+  if (cadaDias < 1) return null;
   const refStr = asOfDate || new Date().toISOString().slice(0, 10);
   const due = dueDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
   const ref = refStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -36,14 +38,15 @@ export function computeInterestForReceivable(config, amount, dueDate, asOfDate =
   const refMs = new Date(parseInt(ref[1], 10), parseInt(ref[2], 10) - 1, parseInt(ref[3], 10)).getTime();
   const daysOverdue = Math.max(0, Math.floor((refMs - dueMs) / (24 * 60 * 60 * 1000)));
   if (daysOverdue <= 0) return null;
-  const periods = Math.floor(daysOverdue / config.cadaDias);
+  const periods = Math.floor(daysOverdue / cadaDias);
   if (periods < 1) return null;
   const amt = parseFloat(amount);
+  const tipo = (config.tipo || '').toString().toLowerCase().trim();
   let interestPerPeriod;
-  if (config.tipo === 'fijo') {
-    interestPerPeriod = config.monto;
-  } else if (config.tipo === 'porcentaje') {
-    interestPerPeriod = amt * (config.monto / 100);
+  if (tipo === 'fijo') {
+    interestPerPeriod = parseFloat(config.monto);
+  } else if (tipo === 'porcentaje') {
+    interestPerPeriod = amt * (parseFloat(config.monto) / 100);
   } else {
     return null;
   }

@@ -95,17 +95,14 @@ export async function sendDueMoraReminders(storeId = null) {
       const totalPaid = r.totalPaid || 0;
       const balance = Math.max(0, amount - totalPaid);
 
-      // Usar config de interés del recordatorio; si no tiene, fallback a la tienda
-      let interestConfig = null;
-      const hasReminderInterest = r.interestCadaDias != null && r.interestCadaDias >= 1
-        && (r.interestTipo === 'fijo' || r.interestTipo === 'porcentaje')
-        && r.interestMonto != null && r.interestMonto >= 1;
-      if (hasReminderInterest) {
-        interestConfig = { cadaDias: r.interestCadaDias, tipo: r.interestTipo, monto: r.interestMonto };
-      } else {
-        const storeConfig = await getStoreInterestConfig(r.storeId);
-        if (storeConfig) {
-          interestConfig = storeConfig;
+      // Config de interés: priorizar tienda (source of truth), fallback al recordatorio
+      let interestConfig = await getStoreInterestConfig(r.storeId);
+      if (!interestConfig) {
+        const hasReminderInterest = r.interestCadaDias != null && r.interestCadaDias >= 1
+          && (r.interestTipo === 'fijo' || r.interestTipo === 'porcentaje')
+          && r.interestMonto != null && r.interestMonto > 0;
+        if (hasReminderInterest) {
+          interestConfig = { cadaDias: r.interestCadaDias, tipo: r.interestTipo, monto: r.interestMonto };
         }
       }
 
