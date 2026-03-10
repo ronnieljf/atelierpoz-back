@@ -17,14 +17,17 @@
 import { getRemindersToSendTodayMora, markReminderSent } from '../services/receivableReminderService.js';
 import { sendWhatsAppTemplate } from '../services/whatsappService.js';
 import { getRequestById } from '../services/requestService.js';
-import { getStoreContact } from '../services/storeService.js';
+import { getStoreContact, getStoreInterestConfig } from '../services/storeService.js';
+import { getTodayCaracas } from '../utils/timezone.js';
 import { computeInterestForReceivable } from '../services/receivableService.js';
 import { query } from '../config/database.js';
 
 function formatFechaHumana(fecha) {
   if (!fecha) return '';
   try {
-    const d = new Date(fecha);
+    const s = String(fecha).trim();
+    const iso = /^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T12:00:00Z` : s;
+    const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return String(fecha);
     const year = d.getUTCFullYear();
     if (year < 2000 || year > 2100) return String(fecha);
@@ -92,17 +95,23 @@ export async function sendDueMoraReminders(storeId = null) {
       const totalPaid = r.totalPaid || 0;
       const balance = Math.max(0, amount - totalPaid);
 
-      // Si interest_cada_dias, interest_tipo o interest_monto son null, 0 o < 1 → monto mora = monto original (no interés)
-      const hasValidInterest = r.interestCadaDias != null && r.interestCadaDias >= 1
+      // Usar config de interés del recordatorio; si no tiene, fallback a la tienda
+      let interestConfig = null;
+      const hasReminderInterest = r.interestCadaDias != null && r.interestCadaDias >= 1
         && (r.interestTipo === 'fijo' || r.interestTipo === 'porcentaje')
         && r.interestMonto != null && r.interestMonto >= 1;
+      if (hasReminderInterest) {
+        interestConfig = { cadaDias: r.interestCadaDias, tipo: r.interestTipo, monto: r.interestMonto };
+      } else {
+        const storeConfig = await getStoreInterestConfig(r.storeId);
+        if (storeConfig) {
+          interestConfig = storeConfig;
+        }
+      }
 
-      const interestConfig = hasValidInterest
-        ? { cadaDias: r.interestCadaDias, tipo: r.interestTipo, monto: r.interestMonto }
-        : null;
-
+      const asOfDate = getTodayCaracas();
       const computed = interestConfig && r.dueDate
-        ? computeInterestForReceivable(interestConfig, amount, r.dueDate)
+        ? computeInterestForReceivable(interestConfig, amount, r.dueDate, asOfDate)
         : null;
 
       const montoOriginalStr = `$${amount.toFixed(2)}`; // monto original de la cuenta

@@ -6,12 +6,12 @@ import { query } from '../config/database.js';
 function formatFechaHumana(fecha) {
   if (!fecha) return '';
   try {
-    const d = new Date(fecha);
+    const s = String(fecha).trim();
+    const iso = /^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T12:00:00Z` : s;
+    const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return String(fecha);
     const year = d.getUTCFullYear();
-    // Si el año luce raro, devolver el valor original para no confundir
     if (year < 2000 || year > 2100) return String(fecha);
-    // Ej: 1 de marzo de 2026
     return d.toLocaleDateString('es-VE', {
       day: 'numeric',
       month: 'long',
