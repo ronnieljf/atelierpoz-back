@@ -105,12 +105,12 @@ export async function sendDueMoraReminders(storeId = null) {
           interestConfig = { cadaDias: r.interestCadaDias, tipo: r.interestTipo, monto: r.interestMonto };
         }
       }
-
+      const fechaVencimientoMora = r.fechaVencimiento || r.dueDate;
       const asOfDate = getTodayCaracas();
-      const computed = interestConfig && r.dueDate
-        ? computeInterestForReceivable(interestConfig, amount, r.dueDate, asOfDate)
+      const opts = interestConfig?.tipo === 'porcentaje' ? { baseAmount: balance } : {};
+      const computed = interestConfig && fechaVencimientoMora
+        ? computeInterestForReceivable(interestConfig, amount, fechaVencimientoMora, asOfDate, opts)
         : null;
-
       const montoOriginalStr = `$${amount.toFixed(2)}`; // monto original de la cuenta
       const rawMontoNuevo = computed
         ? balance + computed.interestAmount

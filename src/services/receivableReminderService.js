@@ -615,7 +615,8 @@ export async function getRemindersToSendTodayMora(storeId = null) {
     rem.totalPaid = parseFloat(row.total_paid) || 0;
     rem.dueDate = toIsoDateString(row.due_date);
     rem.interestCadaDias = row.interest_cada_dias != null ? parseInt(row.interest_cada_dias, 10) : null;
-    rem.interestTipo = row.interest_tipo === 'fijo' || row.interest_tipo === 'porcentaje' ? row.interest_tipo : null;
+    const tipoRaw = (row.interest_tipo || '').toString().toLowerCase().trim();
+    rem.interestTipo = tipoRaw === 'fijo' || tipoRaw === 'porcentaje' ? tipoRaw : null;
     rem.interestMonto = row.interest_monto != null ? parseFloat(row.interest_monto) : null;
     return rem;
   });

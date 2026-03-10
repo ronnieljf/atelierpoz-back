@@ -21,12 +21,13 @@ function toIsoDateString(value) {
 /**
  * Calcular interés por mora para una cuenta pendiente vencida.
  * @param {Object} config - { cadaDias, tipo: 'fijo'|'porcentaje', monto }
- * @param {number} amount - Monto original de la cuenta
+ * @param {number} amount - Monto original de la cuenta (o base para porcentaje)
  * @param {string|null} dueDate - Fecha de vencimiento YYYY-MM-DD
  * @param {string} [asOfDate] - Fecha de referencia YYYY-MM-DD (default: hoy)
- * @returns {{ interestAmount: number, totalWithInterest: number }|null} null si no aplica interés
+ * @param {{ baseAmount?: number }} [opts] - baseAmount: para porcentaje, base del cálculo (ej. saldo pendiente)
+ * @returns {{ interestAmount: number }|null} null si no aplica interés
  */
-export function computeInterestForReceivable(config, amount, dueDate, asOfDate = null) {
+export function computeInterestForReceivable(config, amount, dueDate, asOfDate = null, opts = null) {
   if (!config || !dueDate || amount == null || Number.isNaN(parseFloat(amount))) return null;
   const cadaDias = config.cadaDias != null ? parseInt(config.cadaDias, 10) : 0;
   if (cadaDias < 1) return null;
@@ -40,13 +41,17 @@ export function computeInterestForReceivable(config, amount, dueDate, asOfDate =
   if (daysOverdue <= 0) return null;
   const periods = Math.floor(daysOverdue / cadaDias);
   if (periods < 1) return null;
-  const amt = parseFloat(amount);
   const tipo = (config.tipo || '').toString().toLowerCase().trim();
+  const montoConfig = parseFloat(config.monto);
+  if (Number.isNaN(montoConfig) || montoConfig < 0) return null;
   let interestPerPeriod;
   if (tipo === 'fijo') {
-    interestPerPeriod = parseFloat(config.monto);
+    interestPerPeriod = montoConfig;
   } else if (tipo === 'porcentaje') {
-    interestPerPeriod = amt * (parseFloat(config.monto) / 100);
+    const base = (opts?.baseAmount != null && !Number.isNaN(parseFloat(opts.baseAmount)))
+      ? parseFloat(opts.baseAmount)
+      : parseFloat(amount);
+    interestPerPeriod = base * (montoConfig / 100);
   } else {
     return null;
   }
