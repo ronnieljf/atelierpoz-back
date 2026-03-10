@@ -892,6 +892,24 @@ export async function getPaymentsByReceivableId(receivableId, storeId) {
 }
 
 /**
+ * Obtener abonos recientes de una tienda (para reporte WhatsApp).
+ * @param {string} storeId
+ * @param {number} [limit=20]
+ * @returns {Promise<Array<{ id, receivable_id, amount, currency, notes, created_at, receivable_number }>>}
+ */
+export async function getRecentPaymentsByStore(storeId, limit = 20) {
+  const result = await query(
+    `SELECT rp.id, rp.receivable_id, rp.amount, rp.currency, rp.notes, rp.created_at, r.receivable_number
+     FROM receivable_payments rp
+     INNER JOIN receivables r ON r.id = rp.receivable_id AND r.store_id = $1
+     ORDER BY rp.created_at DESC
+     LIMIT $2`,
+    [storeId, limit]
+  );
+  return result.rows;
+}
+
+/**
  * Registrar un abono en una cuenta por cobrar.
  * Si la suma de abonos >= monto de la cuenta, actualiza la cuenta a status 'paid' y paid_at.
  */

@@ -1,7 +1,7 @@
 /**
  * Servicio de consultas directas para tiendas por WhatsApp.
  * Responde sin usar IA para ahorrar tokens.
- * Solo consultas: pedidos, cuentas por cobrar, ventas, compras, cuentas por pagar.
+ * Solo consultas de cuentas por cobrar: cuentas, recordatorios, abonos, detalle cuenta.
  */
 
 import { getStoreIdsByPhoneNumber } from './storeService.js';
@@ -9,20 +9,16 @@ import {
   getReceivablesByStoreWithPayments,
   getReceivableByStoreAndReceivableNumber,
   getPaymentsByReceivableId,
+  getRecentPaymentsByStore,
 } from './receivableService.js';
 import { getRequestById } from './requestService.js';
-import { getRequestsByStore } from './requestService.js';
-import { getSalesByStore } from './saleService.js';
-import { getPurchasesByStore } from './purchaseService.js';
-import { getExpensesByStore, getPendingTotalByStore } from './expenseService.js';
+import { getRemindersByStore } from './receivableReminderService.js';
 
 /** Palabras clave para detectar cada tipo de consulta (normalizadas a minúsculas) */
 const KEYWORDS = {
-  pedidos: ['pedidos', 'pedido', 'ordenes', 'órdenes', 'orden'],
   cuentas: ['cuentas', 'cuenta', 'cobrar', 'cobranzas', 'quien me debe', 'cuánto me deben', 'cuanto me deben', 'dame el total', 'el total', 'cuánto es el total', 'cuanto es el total', 'total a cobrar'],
-  ventas: ['ventas', 'venta', 'ventas del dia', 'ventas de hoy', 'facturado'],
-  compras: ['compras', 'compra', 'compras realizadas'],
-  cuentasPorPagar: ['cuentas por pagar', 'cuentas a pagar', 'gastos', 'gasto', 'por pagar', 'pendiente de pago'],
+  recordatorios: ['recordatorios', 'recordatorio', 'recordatorios pendientes', 'avisos programados'],
+  abonos: ['abonos', 'abono', 'pagos recibidos', 'cuánto he cobrado', 'cuanto he cobrado'],
 };
 
 /**
@@ -42,7 +38,7 @@ function detectReceivableDetailRequest(messageText) {
 /**
  * Detecta si el mensaje es una consulta conocida y devuelve el tipo.
  * @param {string} messageText - Mensaje normalizado (trim, lowercase)
- * @returns {string|null} - 'pedidos' | 'cuentas' | 'ventas' | 'compras' | 'cuentasPorPagar' | 'detalleCuenta' | null
+ * @returns {string|null} - 'cuentas' | 'recordatorios' | 'abonos' | 'detalleCuenta' | null
  */
 export function detectStoreQueryType(messageText) {
   const text = String(messageText || '').trim().toLowerCase();
@@ -58,34 +54,32 @@ export function detectStoreQueryType(messageText) {
 }
 
 /**
- * Construye el reporte de pedidos pendientes para un teléfono.
+ * Construye el reporte de recordatorios programados por tienda.
  */
-async function buildOrdersReport(senderPhone) {
+async function buildRemindersReport(senderPhone) {
   const stores = await getStoreIdsByPhoneNumber(senderPhone);
   if (stores.length === 0) return '';
 
   const sections = [];
   for (const { storeId, storeName } of stores) {
-    const { requests } = await getRequestsByStore(storeId, { status: 'pending' });
-    if (!requests || requests.length === 0) {
-      sections.push(`📌 *${storeName || storeId}*\nSin pedidos pendientes.\n`);
+    const reminders = await getRemindersByStore(storeId);
+    const pending = reminders.filter((r) => r.status === 'pending' && !r.sent_at);
+    if (pending.length === 0) {
+      sections.push(`📌 *${storeName || storeId}*\nSin recordatorios pendientes.\n`);
       continue;
     }
     let block = `📌 *${storeName || storeId}*\n`;
-    let totalSum = 0;
-    for (const r of requests) {
-      const total = parseFloat(r.total) || 0;
-      totalSum += total;
-      const num = r.order_number != null ? `Pedido #${r.order_number} — ` : '';
-      const cliente = r.customer_name || r.customer_phone || '—';
-      const tel = r.customer_phone ? ` — tel: ${r.customer_phone}` : '';
-      const fecha = r.created_at ? new Date(r.created_at).toLocaleDateString('es', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
-      block += `• ${num}${cliente}${tel}: ${total.toFixed(2)} ${r.currency || 'USD'} (${fecha})\n`;
+    for (const r of pending) {
+      const tipo = r.es_mora ? 'Mora' : 'Aviso';
+      const fecha = r.fecha_envio ? new Date(r.fecha_envio).toLocaleDateString('es', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
+      const cuenta = r.receivable_number != null ? `Cuenta #${r.receivable_number}` : '—';
+      const cliente = r.customer_name || '—';
+      block += `• ${cuenta} — ${cliente} (${tipo}, ${fecha})\n`;
     }
-    block += `_Total: ${requests.length} pedido(s) | Monto: ${totalSum.toFixed(2)}_\n`;
+    block += `_Total: ${pending.length} recordatorio(s) pendiente(s)_\n`;
     sections.push(block);
   }
-  return '📋 *Reporte de pedidos pendientes*\n\n' + sections.join('\n');
+  return '📋 *Recordatorios programados*\n\n' + sections.join('\n');
 }
 
 /**
@@ -173,94 +167,32 @@ async function buildReceivablesReport(senderPhone) {
 }
 
 /**
- * Construye el reporte de ventas recientes (últimas 15).
+ * Construye el reporte de abonos recientes (últimos 15 por tienda).
  */
-async function buildSalesReport(senderPhone) {
+async function buildAbonosReport(senderPhone) {
   const stores = await getStoreIdsByPhoneNumber(senderPhone);
   if (stores.length === 0) return '';
 
   const sections = [];
   for (const { storeId, storeName } of stores) {
-    const { sales, total } = await getSalesByStore(storeId, { limit: 15, offset: 0 });
-    if (!sales || sales.length === 0) {
-      sections.push(`📌 *${storeName || storeId}*\nSin ventas registradas.\n`);
+    const payments = await getRecentPaymentsByStore(storeId, 15);
+    if (!payments || payments.length === 0) {
+      sections.push(`📌 *${storeName || storeId}*\nSin abonos registrados.\n`);
       continue;
     }
     let block = `📌 *${storeName || storeId}*\n`;
     let totalSum = 0;
-    for (const s of sales) {
-      const t = parseFloat(s.total) || 0;
-      totalSum += t;
-      const num = s.saleNumber != null ? `Venta #${s.saleNumber} — ` : '';
-      const cliente = s.clientName || s.clientPhone || '—';
-      const tel = s.clientPhone ? ` — tel: ${s.clientPhone}` : '';
-      const fecha = s.createdAt ? new Date(s.createdAt).toLocaleDateString('es', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
-      block += `• ${num}${cliente}${tel}: ${t.toFixed(2)} ${s.currency || 'USD'} (${fecha})\n`;
+    for (const p of payments) {
+      const amt = parseFloat(p.amount) || 0;
+      totalSum += amt;
+      const cuenta = p.receivable_number != null ? `Cuenta #${p.receivable_number}` : '—';
+      const fecha = p.created_at ? new Date(p.created_at).toLocaleDateString('es', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+      block += `• ${cuenta}: ${amt.toFixed(2)} ${p.currency || 'USD'}${p.notes ? ` — ${p.notes}` : ''} (${fecha})\n`;
     }
-    block += `_Mostrando ${sales.length} de ${total} | Total: ${totalSum.toFixed(2)}_\n`;
+    block += `_Total: ${payments.length} abono(s) | Suma: ${totalSum.toFixed(2)}_\n`;
     sections.push(block);
   }
-  return '📋 *Reporte de ventas*\n\n' + sections.join('\n');
-}
-
-/**
- * Construye el reporte de compras recientes (últimas 15).
- */
-async function buildPurchasesReport(senderPhone) {
-  const stores = await getStoreIdsByPhoneNumber(senderPhone);
-  if (stores.length === 0) return '';
-
-  const sections = [];
-  for (const { storeId, storeName } of stores) {
-    const { purchases, total } = await getPurchasesByStore(storeId, { limit: 15, offset: 0 });
-    if (!purchases || purchases.length === 0) {
-      sections.push(`📌 *${storeName || storeId}*\nSin compras registradas.\n`);
-      continue;
-    }
-    let block = `📌 *${storeName || storeId}*\n`;
-    let totalSum = 0;
-    for (const p of purchases) {
-      const t = parseFloat(p.total) || 0;
-      totalSum += t;
-      const num = p.purchaseNumber != null ? `Compra #${p.purchaseNumber} — ` : '';
-      const proveedor = p.vendorName || p.vendorPhone || '—';
-      const fecha = p.createdAt ? new Date(p.createdAt).toLocaleDateString('es', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
-      block += `• ${num}${proveedor}: ${t.toFixed(2)} ${p.currency || 'USD'} (${fecha})\n`;
-    }
-    block += `_Mostrando ${purchases.length} de ${total} | Total: ${totalSum.toFixed(2)}_\n`;
-    sections.push(block);
-  }
-  return '📋 *Reporte de compras*\n\n' + sections.join('\n');
-}
-
-/**
- * Construye el reporte de cuentas por pagar (gastos pendientes).
- */
-async function buildExpensesReport(senderPhone) {
-  const stores = await getStoreIdsByPhoneNumber(senderPhone);
-  if (stores.length === 0) return '';
-
-  const sections = [];
-  for (const { storeId, storeName } of stores) {
-    const { expenses, total } = await getExpensesByStore(storeId, { status: 'pending', limit: 20, offset: 0 });
-    const pendingTotals = await getPendingTotalByStore(storeId);
-    if (!expenses || expenses.length === 0) {
-      sections.push(`📌 *${storeName || storeId}*\nSin cuentas por pagar pendientes.\n`);
-      continue;
-    }
-    let block = `📌 *${storeName || storeId}*\n`;
-    for (const e of expenses) {
-      const pendiente = Math.max(0, (e.amount || 0) - (e.totalPaid || 0));
-      if (pendiente <= 0) continue;
-      const num = e.expenseNumber != null ? `Gasto #${e.expenseNumber} — ` : '';
-      const desc = e.description || e.vendorName || e.vendorPhone || '—';
-      block += `• ${num}${desc}: ${e.amount} ${e.currency || 'USD'} (pagado: ${(e.totalPaid || 0).toFixed(2)}, pendiente: ${pendiente.toFixed(2)})\n`;
-    }
-    const totalPendiente = pendingTotals.map((t) => `${t.total.toFixed(2)} ${t.currency}`).join(', ');
-    block += `_Total pendiente por pagar: ${totalPendiente || '0'}_\n`;
-    sections.push(block);
-  }
-  return '📋 *Reporte de cuentas por pagar (pendientes)*\n\n' + sections.join('\n');
+  return '📋 *Abonos recientes*\n\n' + sections.join('\n');
 }
 
 /**
@@ -283,31 +215,23 @@ export async function tryStoreDirectQuery(phone, messageText) {
         if (!response) response = `No se encontró la cuenta #${detailReq.receivableNumber}. Escribe *cuentas* para ver el listado.`;
       }
       break;
-    case 'pedidos':
-      response = await buildOrdersReport(String(phone));
-      break;
     case 'cuentas':
       response = await buildReceivablesReport(String(phone));
       break;
-    case 'ventas':
-      response = await buildSalesReport(String(phone));
+    case 'recordatorios':
+      response = await buildRemindersReport(String(phone));
       break;
-    case 'compras':
-      response = await buildPurchasesReport(String(phone));
-      break;
-    case 'cuentasPorPagar':
-      response = await buildExpensesReport(String(phone));
+    case 'abonos':
+      response = await buildAbonosReport(String(phone));
       break;
     default:
       return { handled: false };
   }
 
   const emptyMessages = {
-    pedidos: 'No tienes pedidos pendientes.',
     cuentas: 'No tienes cuentas por cobrar pendientes.',
-    ventas: 'No tienes ventas registradas.',
-    compras: 'No tienes compras registradas.',
-    cuentasPorPagar: 'No tienes cuentas por pagar pendientes.',
+    recordatorios: 'No tienes recordatorios pendientes.',
+    abonos: 'No tienes abonos registrados.',
   };
 
   const finalResponse = response.trim() || emptyMessages[queryType] || 'No hay datos para mostrar.';

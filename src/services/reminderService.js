@@ -6,6 +6,7 @@
  */
 
 import { query } from '../config/database.js';
+import { getTodayCaracas, getDatePartsCaracas } from '../utils/timezone.js';
 import { getUserById } from './authService.js';
 import { sendEmail } from './emailService.js';
 import { getUserStores } from './storeService.js';
@@ -51,7 +52,7 @@ export async function getReceivablesDueForReminder(userId) {
   const daysCreation = Math.max(1, Number(user.reminder_days_after_creation) || 30);
   const daysLastPayment = Math.max(1, Number(user.reminder_days_after_last_payment) || 15);
   const intervalDays = Math.max(1, Number(user.reminder_interval_days) || 7);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getTodayCaracas();
 
   const stores = await getUserStores(userId);
   const due = [];
@@ -273,11 +274,8 @@ export async function runReceivableRemindersJob() {
   let reportsSentWhatsApp = 0;
   let reportsSentEmail = 0;
 
-  const now = new Date();
-  const currentDay = now.getUTCDate();
-  const year = now.getUTCFullYear();
-  const month = now.getUTCMonth();
-  const daysInMonth = new Date(year, month + 1, 0).getUTCDate();
+  const { year, month, day: currentDay } = getDatePartsCaracas();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
 
   for (const u of usersResult.rows) {
     usersProcessed++;
@@ -301,8 +299,9 @@ export async function runReceivableRemindersJob() {
     if (!stores.length) continue;
 
     const minDays = Math.max(1, Math.min(365, Number(u.reminder_min_days_age) || 30));
-    const thresholdDate = new Date(now);
-    thresholdDate.setUTCDate(thresholdDate.getUTCDate() - minDays);
+    const todayCaracas = getTodayCaracas();
+    const thresholdDate = new Date(todayCaracas + 'T12:00:00');
+    thresholdDate.setDate(thresholdDate.getDate() - minDays);
     const threshold = thresholdDate.toISOString().slice(0, 10);
 
     const receivableIds = [];
@@ -421,11 +420,8 @@ export async function runReceivableRemindersJob() {
  * @param {string} userId
  */
 export async function runReceivableRemindersJobForUser(userId) {
-  const now = new Date();
-  const currentDay = now.getUTCDate();
-  const year = now.getUTCFullYear();
-  const month = now.getUTCMonth();
-  const daysInMonth = new Date(year, month + 1, 0).getUTCDate();
+  const { year, month, day: currentDay } = getDatePartsCaracas();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
 
   const { rows } = await query(
     `SELECT id,
@@ -471,8 +467,9 @@ export async function runReceivableRemindersJobForUser(userId) {
   }
 
   const minDays = Math.max(1, Math.min(365, Number(u.reminder_min_days_age) || 30));
-  const thresholdDate = new Date(now);
-  thresholdDate.setUTCDate(thresholdDate.getUTCDate() - minDays);
+  const todayCaracas = getTodayCaracas();
+  const thresholdDate = new Date(todayCaracas + 'T12:00:00');
+  thresholdDate.setDate(thresholdDate.getDate() - minDays);
   const threshold = thresholdDate.toISOString().slice(0, 10);
 
   const receivableIds = [];

@@ -105,7 +105,7 @@ export async function geminiWebhookPost(req, res) {
                 '. Por favor escribe directamente a la tienda o tiendas para coordinar el pago.';
             } else {
               messageToSend =
-                'Hola 👋 No tienes deudas pendientes con ninguna tienda. Si tienes dudas, contacta al número de la tienda donde realizaste tu compra.';
+                'Hola 👋 No tienes deudas pendientes con ninguna tienda. Solo los números de tiendas pueden realizar consultas sobre cuentas por cobrar, recordatorios y abonos. Si tienes dudas sobre tu cuenta, contacta directamente a la tienda donde realizaste tu compra.';
             }
             await sendWhatsAppText(phoneNumberId, from, messageToSend, token);
             console.log(`[groq-webhook] Remitente ${from} no es tienda, respuesta enviada.`);

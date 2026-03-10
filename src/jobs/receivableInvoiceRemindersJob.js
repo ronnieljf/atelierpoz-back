@@ -16,6 +16,7 @@ function formatFechaHumana(fecha) {
       day: 'numeric',
       month: 'long',
       year: 'numeric',
+      timeZone: 'America/Caracas',
     });
   } catch {
     return String(fecha);
@@ -55,7 +56,7 @@ async function buildProductListOrDescription(requestId, storeId, description) {
  * 5: pagomovil
  * 6: transferencia
  * 7: binance
- * 8: lista de productos si tiene, sino descripcion de la cuenta
+ * 8: lista de productos si tiene, sino descripcion de la cuenta + total de la cuenta
  * 9: datos contacto
  * 10: datos contacto
  */
@@ -92,12 +93,18 @@ export async function sendDueInvoiceReminders(storeId = null) {
         var3 = (r.invoiceOrAccount || '').trim() || 's/n';
       }
 
-      // {{8}} lista de productos si tiene, sino descripcion de la cuenta
-      const var8 = await buildProductListOrDescription(
+      // {{8}} lista de productos si tiene, sino descripcion de la cuenta + total de la cuenta
+      let var8 = await buildProductListOrDescription(
         r.requestId,
         r.storeId,
         r.receivableDescription
       );
+      const amount = r.receivableAmount != null ? parseFloat(r.receivableAmount) : null;
+      const currency = r.receivableCurrency || 'USD';
+      const totalStr = amount != null && !Number.isNaN(amount) ? `Total: $${amount.toFixed(2)} ${currency}` : '';
+      if (totalStr) {
+        var8 = var8 ? `${var8} — ${totalStr}` : totalStr;
+      }
 
       const bodyParams = [
         customerName,              // {{1}} nombre del cliente

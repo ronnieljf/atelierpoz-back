@@ -116,6 +116,25 @@ export async function getDefaultReminderData(receivableId, storeId) {
 }
 
 /**
+ * Listar recordatorios de una tienda (todas las cuentas).
+ * @param {string} storeId
+ * @returns {Promise<Array>}
+ */
+export async function getRemindersByStore(storeId) {
+  const result = await query(
+    `SELECT rr.id, rr.receivable_id, rr.store_id, rr.customer_name, rr.store_name, rr.invoice_or_account,
+       rr.fecha_vencimiento, rr.fecha_envio, rr.status, rr.sent_at, rr.tipo_recordatorio, rr.es_mora,
+       r.receivable_number
+     FROM receivable_reminders rr
+     INNER JOIN receivables r ON r.id = rr.receivable_id AND r.store_id = rr.store_id
+     WHERE rr.store_id = $1
+     ORDER BY rr.fecha_envio ASC, rr.created_at ASC`,
+    [storeId]
+  );
+  return result.rows;
+}
+
+/**
  * Listar recordatorios de una cuenta por cobrar
  * @param {string} receivableId
  * @param {string} storeId
@@ -526,11 +545,11 @@ export async function getRemindersToSendToday(storeId = null) {
        rr.fecha_vencimiento, rr.datos_pagomovil, rr.datos_transferencia, rr.datos_binance, rr.datos_contacto,
        rr.fecha_envio, rr.tipo_recordatorio, rr.es_mora, r.customer_phone,
        r.description AS receivable_description, r.invoice_number AS receivable_invoice_number,
-       r.receivable_number AS receivable_number, r.request_id
+       r.receivable_number AS receivable_number, r.request_id, r.amount AS receivable_amount, r.currency AS receivable_currency
      FROM receivable_reminders rr
      INNER JOIN receivables r ON r.id = rr.receivable_id AND r.store_id = rr.store_id
      WHERE rr.status = 'pending' AND rr.sent_at IS NULL
-       AND rr.fecha_envio = CURRENT_DATE
+       AND rr.fecha_envio = (CURRENT_TIMESTAMP AT TIME ZONE 'America/Caracas')::date
        AND rr.tipo_recordatorio = 'aviso'
        AND r.status = 'pending'
   `;
@@ -548,6 +567,8 @@ export async function getRemindersToSendToday(storeId = null) {
     rem.receivableInvoiceNumber = row.receivable_invoice_number != null ? String(row.receivable_invoice_number).trim() : null;
     rem.receivableNumber = row.receivable_number != null ? parseInt(row.receivable_number, 10) : null;
     rem.requestId = row.request_id || null;
+    rem.receivableAmount = row.receivable_amount != null ? parseFloat(row.receivable_amount) : null;
+    rem.receivableCurrency = row.receivable_currency || 'USD';
     return rem;
   });
 }
@@ -572,7 +593,7 @@ export async function getRemindersToSendTodayMora(storeId = null) {
      FROM receivable_reminders rr
      INNER JOIN receivables r ON r.id = rr.receivable_id AND r.store_id = rr.store_id
      WHERE rr.status = 'pending' AND rr.sent_at IS NULL
-       AND rr.fecha_envio = CURRENT_DATE
+       AND rr.fecha_envio = (CURRENT_TIMESTAMP AT TIME ZONE 'America/Caracas')::date
        AND rr.tipo_recordatorio = 'mora'
        AND r.status = 'pending'
   `;

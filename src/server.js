@@ -132,7 +132,7 @@ app.listen(PORT, () => {
   // Ejecutar una vez al iniciar la app para enviar recordatorios pendientes de hoy
   runReminderJob();
   if (cron.validate(REMINDER_JOB_CRON)) {
-    cron.schedule(REMINDER_JOB_CRON, runReminderJob);
+    cron.schedule(REMINDER_JOB_CRON, runReminderJob, { timezone: 'America/Caracas' });
     console.log(`[Recordatorios] Cron programado: ${REMINDER_JOB_CRON}`);
   } else {
     console.warn(`[Recordatorios] Cron inválido "${REMINDER_JOB_CRON}", job no programado. Usa REMINDER_JOB_CRON (ej: 0 9 * * *).`);

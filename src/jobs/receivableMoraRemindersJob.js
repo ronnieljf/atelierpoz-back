@@ -32,6 +32,7 @@ function formatFechaHumana(fecha) {
       day: 'numeric',
       month: 'long',
       year: 'numeric',
+      timeZone: 'America/Caracas',
     });
   } catch {
     return String(fecha);
